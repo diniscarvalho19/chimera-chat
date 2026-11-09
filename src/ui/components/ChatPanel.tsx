@@ -5,7 +5,10 @@ import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
 import { artistMentioned, choirSongs, findSong, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
-import { harmonize } from "../song.ts";
+import { acappella, harmonize } from "../song.ts";
+
+/** a message asking for a song without instruments (however it's spelt) */
+const A_CAPPELLA = /\b(a[\s-]?cap+el+a|acap+el+a|no (instruments|band|music)|voices only|just voices|only voices)\b/i;
 import { MOOD, isMood, moodOf, type Mood } from "../mood.ts";
 import { aiInstall, aiPrompt, aiStatus, type AIStatus } from "../chromeAI.ts";
 import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut, type OrModel } from "../openRouter.ts";
@@ -319,6 +322,8 @@ export function ChatRight() {
           const own = song.voices?.length ?? 0;
           if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
         }
+      // asked a cappella: no band; voices sing its instruments' parts
+      if (A_CAPPELLA.test(message)) songs.forEach((song, i) => (songs[i] = acappella(song)));
       const { text, blocks } = moodBlocks(display, moodOf);
       const msg = push({ role: "assistant", text, shown: 0 });
       sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs };

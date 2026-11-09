@@ -56,3 +56,30 @@ test("asked-for harmony: chord tones under the tune, the same words and rhythm; 
   const bare = parseSong("la la | C5 E5");
   expect(harmonize(bare, 1)[0].song.lines[0].notes.map((n) => n.midi)).toEqual([69, 72]); // under E, C: the tune uses it
 });
+
+test("a cappella: no band; a bass and a backing voice sing the instruments' lowest and highest notes, in range, in time", async () => {
+  const { acappella } = await import("../src/ui/song.ts");
+  const tune = parseSong("Twin-kle twin-kle lit-tle star | C5 C5 G5 G5 A5 A5 G5/2 | C F C");
+  tune.exact = true;
+  // a piano: a low C and a chord over it each two beats, the chord changing
+  tune.parts = [0, 2, 4, 6].flatMap((t) => [
+    { midi: t < 4 ? 36 : 41, t, beats: 2, vocal: false },
+    { midi: t < 4 ? 64 : 65, t, beats: 2, vocal: false },
+    { midi: t < 4 ? 67 : 69, t, beats: 2, vocal: false },
+  ]);
+  const a = acappella(tune);
+  expect(a.parts).toEqual([]);
+  expect(a.lines.every((l) => l.chords.length === 0)).toBe(true);
+  const [bass, backing] = a.voices!;
+  expect(bass.name).toBe("Bass");
+  // the low notes, an octave up into a bass's range; the chord's top note as it is
+  expect(bass.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([48, 48, 53, 53]);
+  expect(backing.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([67, 67, 69, 69]);
+  expect(bass.song.lines[0].lyrics).toBe("bom bom bom bom"); // two beats each: long
+  // each sung note on its beat: 0, 2, 4, 6
+  const n = songNotes(bass.song, 0);
+  expect(n.map((_, i) => n.slice(0, i).reduce((s, x) => s + x.beats + x.rest, 0) + n[i].rest)).toEqual([0, 2, 4, 6]);
+  // no parts, only chords (the model's own song): the voices come from them
+  const own = acappella(parseSong("Twin-kle twin-kle | C4 C4 G4 G4 | C G"));
+  expect(own.voices!.map((v) => v.song.lines.flatMap((l) => l.notes.map((x) => x.midi)))).toEqual([[48, 55], [64, 71]]);
+});
