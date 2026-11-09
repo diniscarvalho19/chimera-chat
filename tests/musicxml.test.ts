@@ -43,6 +43,7 @@ const XML = `<score-partwise><part-list><score-part id="P1"><part-name>Voice</pa
 test("a score's sung melody: repeats with their verses, whole words, holds, ties, chords, one voice, moved into range", async () => {
   const song = scoreToSong(await scoreXml(new TextEncoder().encode(XML)));
   expect(song.bpm).toBe(90);
+  expect(song.meter).toEqual({ beats: 4, at: 0 }); // no time signature: 4/4; it starts on bar 2's downbeat
   expect(song.exact).toBe(true);
   const lyrics = song.lines.map((l) => l.lyrics).join(" / ");
   expect(lyrics).toBe("sing with me now / dance with me now / together ~ home");

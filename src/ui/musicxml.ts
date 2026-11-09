@@ -96,19 +96,23 @@ interface Ev {
 }
 
 /** a part's notes and chord symbols in play order, each at its time (voices, chords and backups placed) */
-function walk(part: string): { notes: Note[]; harmony: { t: number; bar: number; tones: number[] }[] } {
+function walk(part: string): { notes: Note[]; harmony: { t: number; bar: number; tones: number[] }[]; barStarts: number[]; beatsPerBar: number } {
   const measures = [...part.matchAll(/<measure(\s[^>]*)?>([\s\S]*?)<\/measure>/g)].map((m) => m[2]);
-  const notes: Note[] = [], harmony: { t: number; bar: number; tones: number[] }[] = [];
+  const notes: Note[] = [], harmony: { t: number; bar: number; tones: number[] }[] = [], barStarts: number[] = [];
+  let beatsPerBar = 0;
   let divisions = 1, barStart = 0;
   // a transposing part (a tenor in treble clef, a B♭ clarinet) is written at another pitch than it sounds
   let transpose = 0;
   playOrder(measures).forEach(({ xml: m, pass }, bar) => {
     let pos = 0, longest = 0, lastStart = 0; // in beats from the bar's start
+    barStarts.push(barStart);
     for (const e of m.matchAll(/<(attributes|note|harmony|backup|forward)\b[^>]*>([\s\S]*?)<\/\1>/g)) {
       const [, kind, x] = e;
       const dur = Number(tag(x, "duration")) / divisions || 0;
       if (kind === "attributes") {
         divisions = Number(tag(x, "divisions")) || divisions;
+        const time = tag(x, "time");
+        if (time && !beatsPerBar) beatsPerBar = (Number(tag(time, "beats")) * 4) / Number(tag(time, "beat-type")) || 0;
         const tr = tag(x, "transpose");
         if (tr) transpose = Number(tag(tr, "chromatic") ?? 0) + 12 * Number(tag(tr, "octave-change") ?? 0);
       }
@@ -137,7 +141,7 @@ function walk(part: string): { notes: Note[]; harmony: { t: number; bar: number;
     }
     barStart += longest;
   });
-  return { notes, harmony };
+  return { notes, harmony, barStarts, beatsPerBar: beatsPerBar || 4 };
 }
 
 /**
@@ -158,7 +162,7 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
   const tempo = attrs(xml, "sound").find((a) => a.tempo)?.tempo ?? tag(xml, "per-minute");
   const bpm = Math.min(200, Math.max(40, Number(tempo) || 100));
 
-  const { notes, harmony } = walk(main.xml);
+  const { notes, harmony, barStarts, beatsPerBar } = walk(main.xml);
   const voice = lyricVoice(notes);
   const evs = sungEvents(notes, voice);
 
@@ -227,6 +231,7 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
     lines: toLines(sung, shift, count, chordsAt),
     ...(under.length ? { parts: under.slice(0, 3000) } : {}),
     ...(voices.length ? { voices: voices.map(({ name, song }) => ({ name, song })) } : {}),
+    meter: { beats: beatsPerBar, at: t0 - (barStarts[sung[0].bar] ?? t0) },
   };
 }
 

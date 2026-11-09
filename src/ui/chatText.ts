@@ -49,6 +49,10 @@ export interface Song {
   parts?: PartNote[];
   /** a found song's other sung parts (a choir's alto, tenor, bass), each sung by a voice of its own */
   voices?: { name: string; song: Song }[];
+  /** sung a cappella: a beatboxer keeps the beat (a voice of its own, after the bass) */
+  beatbox?: boolean;
+  /** a found song's bar: its length in beats, and how far into one its first note is (a pickup) */
+  meter?: { beats: number; at: number };
 }
 
 /** a note of a found song's other parts; `t` and `beats` in beats from the song's first sung note */

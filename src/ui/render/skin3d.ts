@@ -159,10 +159,29 @@ function mouthCorner(head: THREE.Mesh): THREE.Vector3 {
 
 /** load the head (needs the renderer, for which compressed textures it can take) */
 export async function loadSkin(gl: THREE.WebGLRenderer): Promise<Skin> {
+  return new Skin(await loadFace(gl));
+}
+
+/**
+ * Heads for the choir: the model loaded once, each a copy (its own shapes and materials, the mesh
+ * data shared), so the second and third cost nothing to make.
+ */
+export async function loadSkins(gl: THREE.WebGLRenderer, n: number): Promise<Skin[]> {
+  const scene = await loadFace(gl);
+  return Array.from({ length: n }, () => {
+    const copy = scene.clone();
+    copy.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (m.isMesh) m.material = [m.material].flat()[0].clone();
+    });
+    return new Skin(copy);
+  });
+}
+
+async function loadFace(gl: THREE.WebGLRenderer): Promise<THREE.Object3D> {
   const ktx2 = new KTX2Loader().setTranscoderPath(`${import.meta.env.BASE_URL}basis/`).detectSupport(gl);
   try {
-    const gltf = await new GLTFLoader().setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder).loadAsync(`${import.meta.env.BASE_URL}models/facecap.glb`);
-    return new Skin(gltf.scene);
+    return (await new GLTFLoader().setKTX2Loader(ktx2).setMeshoptDecoder(MeshoptDecoder).loadAsync(`${import.meta.env.BASE_URL}models/facecap.glb`)).scene;
   } finally {
     ktx2.dispose();
   }

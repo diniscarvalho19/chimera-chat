@@ -11,7 +11,7 @@
 import * as THREE from "three";
 import { engine } from "../../audio/AudioEngine.ts";
 import { currentChoir, currentPlan, planNow } from "../speech.ts";
-import { loadSkin, type Skin } from "./skin3d.ts";
+import { loadSkins, type Skin } from "./skin3d.ts";
 import { Expression } from "./expression.ts";
 import { VoiceModel } from "../analysis.ts";
 import { label } from "./vector.ts";
@@ -42,8 +42,8 @@ export class Choir {
     this.camera.lookAt(0, 0, 0);
   }
 
-  /** the renderer and enough heads, made the first time a choir sings and kept; false until ready */
-  private ready(n: number, dpr: number): boolean {
+  /** the renderer, made the first time a choir sings and kept, and the heads loading (four: the most a choir has) */
+  private ready(dpr: number): boolean {
     if (this.failed) return false;
     if (!this.gl) {
       try {
@@ -59,23 +59,24 @@ export class Choir {
       this.gl.setPixelRatio(dpr);
       this.gl.setSize(W, H, false);
     }
-    if (this.heads.length < n && !this.loading) {
+    if (!this.heads.length && !this.loading) {
       this.loading = true;
-      loadSkin(this.gl).then(
-        (skin) => {
-          this.loading = false;
+      loadSkins(this.gl, 4).then(
+        (skins) => {
           if (this.gone) return;
-          // face the camera (the skin turns the head for the main view), centred, a unit tall
-          skin.root.rotation.y = -Math.PI / 2;
-          skin.tone(false);
-          const box = new THREE.Box3().setFromObject(skin.root);
-          const size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
-          const k = 1 / size.y;
-          skin.root.scale.setScalar(k);
-          skin.root.position.copy(mid).multiplyScalar(-k);
-          const scene = new THREE.Scene();
-          scene.add(skin.root);
-          this.heads.push({ skin, scene, face: new Expression() });
+          for (const skin of skins) {
+            // face the camera (the skin turns the head for the main view), centred, a unit tall
+            skin.root.rotation.y = -Math.PI / 2;
+            skin.tone(false);
+            const box = new THREE.Box3().setFromObject(skin.root);
+            const size = box.getSize(new THREE.Vector3()), mid = box.getCenter(new THREE.Vector3());
+            const k = 1 / size.y;
+            skin.root.scale.setScalar(k);
+            skin.root.position.copy(mid).multiplyScalar(-k);
+            const scene = new THREE.Scene();
+            scene.add(skin.root);
+            this.heads.push({ skin, scene, face: new Expression() });
+          }
         },
         (err) => {
           this.loading = false;
@@ -83,7 +84,7 @@ export class Choir {
         },
       );
     }
-    return this.heads.length >= n;
+    return this.heads.length > 0;
   }
 
   /** Draw the singers (if a song with them is playing) along the bottom of a w×h (CSS px) canvas. */
@@ -92,13 +93,14 @@ export class Choir {
     const p = currentPlan(), now = planNow(p);
     // the song over (or another one begun): no heads
     if (!choir || !p || (now >= 0 && now > p.plan.end + 0.3)) return;
-    if (!this.ready(choir.length, dpr) || !this.gl) return;
+    if (!this.ready(dpr) || !this.gl) return;
     const gl = this.gl;
     const top = h - EDGE - CAPTION - H;
     choir.forEach((part, i) => {
       const x = EDGE + i * (W + GAP);
       if (x + W > w) return; // no room: a narrow screen shows the first ones
       const head = this.heads[i];
+      if (!head) return;
       const tele = engine.choirLatest(i);
       head.face.update(tele, dt);
       if (tele) head.skin.drive(VoiceModel.articFromArray(tele.t.artic), head.face, 0, 0);

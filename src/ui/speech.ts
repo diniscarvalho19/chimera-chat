@@ -2,7 +2,7 @@
 import type { BodyMix } from "../wasm/types.ts";
 import { EnglishG2P, type Phrase } from "../wasm/engine.ts";
 import { tokenizeIpa } from "../wasm/engine.ts";
-import { planPhrases, planSong, type Plan, type Segment } from "../wasm/engine.ts";
+import { parseBeat, planPhrases, planSong, type Plan, type Segment } from "../wasm/engine.ts";
 import { songNotes } from "./song.ts";
 import { playBacking, playParts, stopBacking, type ChordSpan } from "./backing.ts";
 import type { PartNote, Song } from "./chatText.ts";
@@ -107,6 +107,20 @@ function partNotes(song: Song): PartNote[] {
   );
 }
 
+/** the beatboxer's groove (a cappella), by beats in the bar: kick, hat, snare, a sixteenth a step */
+const GROOVES: Record<number, string> = {
+  2: "B . t . | Pf . t .",
+  3: "B . t . | Pf . t . | Pf . t .",
+  4: "B . t . | Pf . t . | B . t . | Pf . t .",
+};
+/** the groove for a song's bar, turned so its first step is where the song starts in its bar */
+function groove(meter: Song["meter"]): (import("../wasm/types.ts").BeatStep | null)[] {
+  const beats = meter?.beats ?? 4;
+  const steps = parseBeat(GROOVES[beats === 1.5 || beats === 3 ? 3 : beats === 2 ? 2 : 4]);
+  const k = Math.round(((meter?.at ?? 0) % (steps.length / 4)) * 4) % steps.length;
+  return [...steps.slice(k), ...steps.slice(0, k)];
+}
+
 /** the song's first note, in plan time (s) */
 const T0 = 0.35;
 
@@ -146,7 +160,11 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
   // as many other singers as the audio thread has room for (each costs about what the lead does);
   // the rest are heard as "ooh"s in the band
   const room = Math.max(0, Math.floor(0.85 / Math.max(engine.load, 0.1)) - 1);
-  const sung = (song.voices ?? []).slice(0, room), hummed = (song.voices ?? []).slice(room);
+  // a beatboxer (a cappella) takes the place after the bass: the groove before the inner lines
+  const all = song.voices ?? [];
+  const beatAt = song.beatbox ? Math.min(all.length, all.findIndex((v) => v.name === "Bass") + 1 || all.length) : -1;
+  const beatSung = beatAt >= 0 && beatAt < room;
+  const sung = all.slice(0, beatSung ? room - 1 : room), hummed = all.slice(beatSung ? room - 1 : room);
   const parts = [...(song.parts ?? []), ...hummed.flatMap((v) => partNotes(v.song))].sort((a, b) => a.t - b.t);
   const voices = sung.flatMap((v) => {
     const pitches = v.song.lines.flatMap((l) => l.notes.flatMap((n) => (n.midi === null ? [] : [n.midi]))).sort((a, b) => a - b);
@@ -157,8 +175,23 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
   const sp = playPlan(plan, words.filter((w) => w.text !== "~"), song.lines.map((l) => l.lyrics).join(" | "));
   // the worklets time their plans from when they get them: the other singers and the band start
   // on the same instant (sent in this same task)
-  engine.singChoir(voices.map((v) => ({ plan: v.plan, body: v.body })));
-  choir = voices.length ? { planId: sp.id, parts: voices.map((v) => ({ name: v.name, words: v.words.filter((w) => w.text !== "~") })) } : null;
+  const choirParts: ChoirPart[] = voices.map((v) => ({ name: v.name, words: v.words.filter((w) => w.text !== "~") }));
+  const nodes: Parameters<typeof engine.singChoir>[0] = voices.map((v) => ({ plan: v.plan, body: v.body }));
+  if (beatSung) {
+    const at = Math.min(beatAt, nodes.length);
+    const steps = groove(song.meter);
+    const step = beat / 4; // sixteenths
+    // its "words": the sound on each step, for its face's caption
+    const hits: WordSpan[] = [];
+    for (let k = 0; T0 + k * step < end; k++) {
+      const s = steps[k % steps.length];
+      if (s) hits.push({ text: s.id, t0: T0 + k * step, t1: T0 + (k + 1) * step });
+    }
+    nodes.splice(at, 0, { beat: steps, bpm: song.bpm, start: T0, stop: end + beat, body: { female: 0, child: 0 } });
+    choirParts.splice(at, 0, { name: "Beatbox", words: hits });
+  }
+  engine.singChoir(nodes);
+  choir = choirParts.length ? { planId: sp.id, parts: choirParts } : null;
   // a found song plays its own other parts; else the band strums the chords
   if (engine.ctx) {
     if (parts.length) playParts(parts, engine.ctx.currentTime + T0, beat);

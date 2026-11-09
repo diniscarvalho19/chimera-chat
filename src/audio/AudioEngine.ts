@@ -148,7 +148,13 @@ export class AudioEngine {
    * they start on the same render quantum as a plan scheduled with them. Nodes are made on first use
    * and kept (silent when idle).
    */
-  singChoir(parts: { plan: { gestures: import("../wasm/types.ts").Gesture[]; segments: import("../wasm/types.ts").PlannedSegment[]; end: number }; body: BodyMix }[]): void {
+  singChoir(
+    parts: (
+      | { plan: { gestures: import("../wasm/types.ts").Gesture[]; segments: import("../wasm/types.ts").PlannedSegment[]; end: number }; body: BodyMix }
+      /** a beatboxer: its sequencer from `start` s to `stop` s from now */
+      | { beat: (import("../wasm/types.ts").BeatStep | null)[]; bpm: number; start: number; stop: number; body: BodyMix }
+    )[],
+  ): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
     while (this.choirNodes.length < parts.length) {
@@ -166,12 +172,25 @@ export class AudioEngine {
     parts.forEach((p, i) => {
       const port = this.choirNodes[i].node.port;
       port.postMessage({ type: "body", body: p.body } satisfies ToWorklet);
-      port.postMessage({ type: "schedule", gestures: p.plan.gestures, segments: p.plan.segments, end: p.plan.end, id: ++this.speakId, replace: true } satisfies ToWorklet);
+      if ("plan" in p) port.postMessage({ type: "schedule", gestures: p.plan.gestures, segments: p.plan.segments, end: p.plan.end, id: ++this.speakId, replace: true } satisfies ToWorklet);
+      else {
+        // the sequencer starts on a message: its start is a timer's (a few ms either way)
+        port.postMessage({ type: "beat", steps: p.beat, bpm: p.bpm, swing: 0, playing: false } satisfies ToWorklet);
+        this.beatTimers.push(
+          window.setTimeout(() => port.postMessage({ type: "beat", playing: true } satisfies ToWorklet), p.start * 1000),
+          window.setTimeout(() => port.postMessage({ type: "beat", playing: false } satisfies ToWorklet), p.stop * 1000),
+        );
+      }
     });
   }
+  private beatTimers: number[] = [];
 
   stopChoir(): void {
-    for (const c of this.choirNodes) c.node.port.postMessage({ type: "stopSpeech" } satisfies ToWorklet);
+    for (const t of this.beatTimers.splice(0)) clearTimeout(t);
+    for (const c of this.choirNodes) {
+      c.node.port.postMessage({ type: "stopSpeech" } satisfies ToWorklet);
+      c.node.port.postMessage({ type: "beat", playing: false } satisfies ToWorklet);
+    }
   }
 
   /** an extra singer's latest telemetry (its mouth), or null */
