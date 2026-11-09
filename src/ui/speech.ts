@@ -2,7 +2,10 @@
 import type { BodyMix } from "../wasm/types.ts";
 import { EnglishG2P, type Phrase } from "../wasm/engine.ts";
 import { tokenizeIpa } from "../wasm/engine.ts";
-import { planPhrases, type Plan, type Segment } from "../wasm/engine.ts";
+import { planPhrases, planSong, type Plan, type Segment } from "../wasm/engine.ts";
+import { songNotes } from "./song.ts";
+import type { Song } from "./chatText.ts";
+import { nearestBody } from "./body.ts";
 import { engine } from "../audio/AudioEngine.ts";
 import type { Gesture } from "../wasm/types.ts";
 import { wordSpans, type WordSpan } from "./words.ts";
@@ -20,8 +23,6 @@ export interface SpokenPlan {
 }
 
 let current: SpokenPlan | null = null;
-/** the plan a stop cut short: its words are no longer being said */
-let cutId = -1;
 const listeners = new Set<(p: SpokenPlan | null) => void>();
 engine.onPlanned((m) => {
   if (current && m.id === current.id) {
@@ -53,10 +54,35 @@ export function transcribe(phrases: { segments: Segment[]; intonation?: string }
 
 export function speakPhrases(phrases: { segments: Segment[]; intonation?: "statement" | "question" | "flat"; pause?: number; words?: string[] }[], o: { body: BodyMix; rate: number; f0: number }): SpokenPlan {
   const plan = planPhrases(phrases, { body: o.body, t0: 0, rate: o.rate, f0: o.f0 });
+  return playPlan(plan, wordSpans(phrases, plan), transcribe(phrases));
+}
+
+/** Send a plan to the worklet as the current utterance (spoken or sung): the face and the chat follow it. */
+function playPlan(plan: Plan, words: WordSpan[], transcription: string): SpokenPlan {
   const id = engine.schedule({ gestures: plan.gestures.map((g: Gesture) => ({ ...g, targets: { ...g.targets } })), segments: plan.segments, end: plan.end });
-  current = { plan, offset: null, id, transcription: transcribe(phrases), words: wordSpans(phrases, plan) };
+  current = { plan, offset: null, id, transcription, words };
   for (const l of listeners) l(current);
   return current;
+}
+
+/** Sing a chat song; each syllable is a "word" (for the reveal and the mouth). Male sings an octave down. */
+export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | null> {
+  try {
+    await g2p.load();
+  } catch {
+    // the letter-to-sound rules still work
+  }
+  const notes = songNotes(song, nearestBody(body) === "male" ? -12 : 0);
+  if (!notes.length) return null;
+  const t0 = 0.35, beat = 60 / song.bpm;
+  const plan = planSong(notes, { body, bpm: song.bpm, t0, vibrato: 35 });
+  let t = t0;
+  const words = notes.map((n): WordSpan => {
+    const w = { text: n.syl.text, t0: t, t1: t + n.beats * beat };
+    t = w.t1;
+    return w;
+  });
+  return playPlan(plan, words.filter((w) => w.text !== "~"), song.lines.map((l) => l.lyrics).join(" | "));
 }
 
 export async function speakText(text: string, o: { ipa: boolean; body: BodyMix; rate: number; f0: number }): Promise<SpokenPlan | null> {
@@ -77,15 +103,10 @@ export async function speakText(text: string, o: { ipa: boolean; body: BodyMix; 
 
 export function stopSpeaking(): void {
   engine.stopSpeech();
-  if (current) cutId = current.id;
 }
 
-/** The word being spoken now (null between words and once the speech is over or stopped). */
-export function spokenWordNow(): { key: string; text: string } | null {
-  const p = current;
-  const t = engine.voiceClock();
-  if (!p || p.offset === null || t === null || p.id === cutId) return null;
-  const pt = t - p.offset;
-  const i = p.words.findIndex((w) => pt >= w.t0 && pt < w.t1 + 0.05);
-  return i < 0 ? null : { key: `${p.id}:${i}`, text: p.words[i].text };
+/** Plan time now (s), or -1 before the worklet has placed it. */
+export function planNow(sp: SpokenPlan | null): number {
+  const tele = engine.latest;
+  return sp && sp.offset !== null && tele ? tele.t.clock - sp.offset : -1;
 }

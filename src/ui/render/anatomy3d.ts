@@ -63,7 +63,6 @@ const WIDEST: Table = [[-4.6, 0.5], [3.0, 0.5], [6.0, 0.42], [12, 0.42], [16, 0.
 const JAW_BORDER: Table = [[-3, 8.5], [-1.6, 8.0], [-0.6, 6.4], [1.2, 4.6], [3.5, 3.6], [5.3, 3.0], [7.3, 3.3], [8.6, 4.4]];
 /** the back edge of the ramus (y → x): the skin behind it stays with the skull */
 const RAMUS_BACK: Table = [[6.0, -0.6], [7.4, -0.8], [9.6, -1.9], [10.6, -2.5], [12, -2.6]];
-const BRAIN_WIDTH: Table = [[12.3, 4.0], [13.0, 5.6], [14.5, 6.4], [16.5, 6.9], [18.5, 6.6], [20.0, 5.4], [21.0, 3.6], [21.45, 0.5]];
 /** the tongue's half-width and how far its sides fall below the midline, root (0) to tip (1) */
 const TONGUE_W: Table = [[0, 1.5], [0.15, 1.9], [0.35, 2.35], [0.6, 2.45], [0.8, 2.2], [0.92, 1.5], [1, 0.55]];
 const TONGUE_H: Table = [[0, 1.3], [0.35, 1.1], [0.7, 0.9], [0.9, 0.55], [1, 0.25]];
@@ -74,6 +73,14 @@ const LOWER_TEETH = [[0.54, 0.9, 0.6], [0.6, 0.92, 0.62], [0.7, 1.0, 0.75], [0.7
 const LIP_HALF = 3.0;
 /** superellipse exponent of the back half of a cross-section */
 const PB = 2.2;
+/** how far a full smile lifts the mouth's corners and pulls them back (template cm) */
+const SMILE_UP = 0.42, SMILE_BACK = 0.2;
+/** a smile's shift at a point of the lips: u = z / the patch's half width, m = how much it follows */
+function smileAt(k: number, smile: number, u: number, m: number): [number, number] {
+  if (smile === 0) return [0, 0];
+  const c = Math.min(1, u * u) * m * k;
+  return [-SMILE_BACK * Math.max(0, smile) * c, SMILE_UP * smile * c];
+}
 
 /** a head (or brain) cross-section at one height: front and back on the midline, the bare front
  *  beside the midline feature, half-width, where it is widest, the feature's size and width, and
@@ -438,60 +445,6 @@ function buildRest(model: VoiceModel): Rest {
     for (const side of [1, -1]) L.ellipse([8.05 * k, By(10.98), side * 0.62 * k], [0.42 * k, 0.04 * k, 0], [0, 0, 0.26 * k], 16);
   });
 
-  // ---- brain: rings and meridians over the 2D outline, the skull and its base stay on the midline
-  const brain = new Shape(prof.brain, 0.08 * k, (y, F, Bk) => ({ F, Bk, Fs: F, W: interp(BRAIN_WIDTH, unBy(y)) * k, xw: Bk + (F - Bk) * 0.48, E: 0, wf: 1, pf: 2.3 }));
-  group(fixed, V.blueMid, 0.85, 0.32, (L) => {
-    for (let y = brain.y0 + 0.6 * k; y < brain.y1 - 0.15 * k; y += 1.5 * k) {
-      const s = brain.at(y);
-      if (!s) continue;
-      for (let i = 0; i <= 48; i++) {
-        const th = (i / 48) * Math.PI * 2, c = Math.cos(th), sn = Math.sin(th);
-        const p = c >= 0 ? s.pf : PB;
-        const x = c >= 0 ? s.xw + (s.Fs - s.xw) * Math.pow(c, 2 / p) : s.xw - (s.xw - s.Bk) * Math.pow(-c, 2 / p);
-        L.p(x, y, Math.sign(sn) * s.W * Math.pow(Math.abs(sn), 2 / p));
-      }
-      L.end();
-    }
-    for (const th of [0.3, 0.7].map((v) => v * Math.PI)) {
-      for (const side of [1, -1]) {
-        for (let y = brain.y0; y <= brain.y1; y += 0.3 * k) {
-          const s = brain.at(y);
-          if (!s) continue;
-          const c = Math.cos(th), sn = Math.sin(th);
-          const p = c >= 0 ? s.pf : PB;
-          const x = c >= 0 ? s.xw + (s.Fs - s.xw) * Math.pow(c, 2 / p) : s.xw - (s.xw - s.Bk) * Math.pow(-c, 2 / p);
-          L.p(x, y, side * s.W * Math.pow(sn, 2 / p));
-        }
-        L.end();
-      }
-    }
-  });
-
-  // ---- cervical vertebrae: bodies, arches, processes; the spinal cord through them
-  group(fixed, V.blueDim, 0.9, 0.6, (L) => {
-    for (let i = 0; i < 9; i++) {
-      const y0 = -4.4 + i * 1.75;
-      if (y0 > 10.5) break;
-      const x0 = wallX(y0) - 2.25;
-      const lo = P(x0, y0 + 0.08), hi = P(x0, y0 + 1.32);
-      const cx = P(x0 + 0.8, 0).x, rx = 0.8 * k, rz = 1.05 * k;
-      for (const y of [lo.y, hi.y]) L.ellipse([cx, y, 0], [rx, 0, 0], [0, 0, rz], 24);
-      for (const a of [0.25, 0.75, 1.25, 1.75].map((v) => v * Math.PI)) L.p(cx + rx * Math.cos(a), lo.y, rz * Math.sin(a)).p(cx + rx * Math.cos(a), hi.y, rz * Math.sin(a)).end();
-      const ym = (lo.y + hi.y) / 2, ax = cx - 2.15 * k;
-      L.ellipse([ax, ym, 0], [0.72 * k, 0, 0], [0, 0, 0.88 * k], 20);
-      for (const s of [1, -1]) {
-        L.p(cx - 0.7 * k, ym, s * 0.55 * k).p(ax + 0.45 * k, ym, s * 0.72 * k).end();
-        L.p(cx - 0.5 * k, ym, s * 0.95 * k).p(cx - 0.9 * k, ym - 0.1 * k, s * 2.3 * k).end();
-      }
-      L.p(ax - 0.72 * k, ym, 0).p(ax - 1.8 * k, ym - 0.55 * k, 0).end();
-    }
-  });
-  group(fixed, V.blueDim, 0.85, 0.5, (L) => {
-    const cx = P(-4.9, 0).x;
-    for (let y = -4.4; y <= 11.0; y += 1.75) L.ellipse([cx, P(0, y).y, 0], [0.42 * k, 0, 0], [0, 0, 0.6 * k], 16);
-    for (const s of [1, -1]) L.p(cx, P(0, -4.6).y, s * 0.6 * k).p(cx, P(0, 11.4).y, s * 0.6 * k).end();
-  });
-
   // ---- nasal cavity: the septum is the 2D outline; its side walls and the turbinates beside it
   group(fixed, V.blueDim, 0.9, 0.7, (L) => {
     for (const s of [1, -1]) {
@@ -706,8 +659,10 @@ export class Anatomy3D {
     // fit the head's height (and its width in a narrow screen) at a male's size, so bodies compare
     const d = 1.1 * Math.max(15.2 / half, 11 / (half * Math.max(0.3, this.camera.aspect)));
     const target = r.center.clone();
-    // facing left: the same three-quarter view from the head's other side
-    const az = this.facing > 0 ? 0.62 : Math.PI - 0.62, el = 0.2;
+    // home: facing the viewer, turned a touch so the depth (jaw, lips, airway) still reads; facing
+    // left mirrors it
+    const FRONT = Math.PI / 2 - 0.22;
+    const az = this.facing > 0 ? FRONT : Math.PI - FRONT, el = 0.08;
     return {
       target,
       home: target.clone().add(new THREE.Vector3(Math.sin(az) * Math.cos(el), Math.sin(el), Math.cos(az) * Math.cos(el)).multiplyScalar(d)),
@@ -818,7 +773,6 @@ export class Anatomy3D {
     const G = buildProfile(model, f, a);
     line(G.inset, V.blueDim, 0.9, { alpha: 0.5 });
     line(G.skull, V.blueDim, 0.9, { close: true, alpha: 0.6 });
-    line(G.brain, V.blueMid, 1.0, { close: true, alpha: 0.75 });
     line(G.sulcus, V.blueDim, 0.9);
     line(G.nasal, V.blueMid, 1, { close: true });
     line(G.palOral, V.blueMid, 1.1);
@@ -950,7 +904,7 @@ export class Anatomy3D {
       lid(false);
       // the brow above it: up with the pitch, knit (inner end down) on a low note, and on a long
       // high note with the eyes shut, the inner end up (the singer feeling it)
-      const lift = 0.3 * e.brow, knit = 0.28 * Math.max(0, -e.brow), feel = 0.22 * e.lid * wide;
+      const lift = 0.55 * e.brow, knit = 0.5 * Math.max(0, -e.brow), feel = 0.22 * e.lid * wide;
       for (let i = 0; i <= 12; i++) {
         const sv = -1 + i / 6, al = out * (0.15 + sv * 0.62), inner = (1 - sv) / 2;
         const be = 0.82 + 0.12 * (1 - sv * sv) - 0.06 * sv + lift + (feel - knit) * inner;
@@ -1003,7 +957,9 @@ export class Anatomy3D {
       // the cheeks' puff, as the shell beside the patch takes it
       const [dx, dz] = puffAt(k, cheekWeight(k, ph, x, y), z, this.face.puff);
       const [rx, ry] = w ? rotXY(x + dx, y, C, phi * w) : [x + dx, y];
-      return [rx, ry, z + dz];
+      // a smile draws the corners up and back (a frown, down), the middle stays
+      const [sx, sy] = smileAt(k, this.face.smile, z / Wl, 1 - 0.5 * t);
+      return [rx + sx, ry + sy, z + dz];
     };
     const row = (upper: boolean, t: (z: number) => number, z0: number, z1: number, n: number): Poly => {
       P.reset();

@@ -10,7 +10,6 @@ import { initEngine } from "./harness.ts";
 await initEngine();
 const { EnglishG2P, planPhrases, tokenizeIpa } = await import("../src/wasm/engine.ts");
 const { wordSpans } = await import("../src/ui/words.ts");
-const { advanceTrail } = await import("../src/ui/mouthWords.ts");
 const g2p = new EnglishG2P();
 g2p.setDictionaryText(gunzipSync(readFileSync(new URL("../public/data/cmudict.txt.gz", import.meta.url))).toString());
 const male = { female: 0, child: 0 };
@@ -51,22 +50,5 @@ describe("words said", () => {
     expect(ends).toBe(2);
     const plan = planPhrases(phrases, { body: male, t0: 0 });
     expect(wordSpans(phrases, plan).map((w) => w.text)).toEqual(["hello", "world"]);
-  });
-});
-
-describe("the trail at the mouth", () => {
-  const word = (key: string) => ({ key, text: key });
-  test("a word that comes back after a brief gap stays, a new one sends it off", () => {
-    const t = { entries: [] as { word: { key: unknown; text: string }; left: number | null }[] };
-    advanceTrail(t, word("a"), 0);
-    advanceTrail(t, null, 0.02); // a frame between two notes of one syllable
-    expect(t.entries[0].left).toBe(0.02);
-    advanceTrail(t, word("a"), 0.04);
-    expect(t.entries.map((e) => [e.word.key, e.left])).toEqual([["a", null]]);
-    advanceTrail(t, word("b"), 0.1);
-    expect(t.entries.map((e) => [e.word.key, e.left])).toEqual([["a", 0.1], ["b", null]]);
-    // gone once it has flown off
-    advanceTrail(t, word("b"), 1);
-    expect(t.entries.map((e) => e.word.key)).toEqual(["b"]);
   });
 });

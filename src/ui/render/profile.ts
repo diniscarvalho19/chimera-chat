@@ -191,9 +191,10 @@ export class Gaze {
 
   update(clock: number, dt: number): void {
     if (clock >= this.next) {
-      const centre = Math.random() < 0.35;
-      this.toPitch = centre ? 0 : (Math.random() * 2 - 1) * 0.55;
-      this.toYaw = centre ? 0 : (Math.random() * 2 - 1) * 0.9;
+      // mostly on the viewer (the head faces them), with short glances away
+      const centre = Math.random() < 0.7;
+      this.toPitch = centre ? 0 : (Math.random() * 2 - 1) * 0.35;
+      this.toYaw = centre ? 0 : (Math.random() * 2 - 1) * 0.5;
       this.next = clock + 1.2 + Math.random() * 3.5;
     }
     const ease = 1 - Math.exp(-dt * 28);

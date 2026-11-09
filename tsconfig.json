@@ -15,5 +15,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["src", "tools", "tests"]
+  "include": ["src", "tests", "vite.config.ts"]
 }

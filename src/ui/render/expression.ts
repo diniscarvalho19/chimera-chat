@@ -62,6 +62,14 @@ export class Expression {
   nod = 0;
   /** 3D head: tilted towards its right shoulder (+), radians */
   tilt = 0;
+  /** mouth corners: +1 smiling, −1 turned down */
+  smile = 0;
+  /** the mood the face holds (set by the view; the face eases into it) */
+  mood = { smile: 0, brow: 0, lid: 0, tilt: 0 };
+  private held2 = { smile: 0, brow: 0, lid: 0, tilt: 0 };
+  /** since the voice last sounded (s), and how much it said before falling quiet */
+  private quiet = 0;
+  private said = 0;
 
   private clock = 0;
   private readonly cheeks = new Spring(6.5, 0.32);
@@ -106,7 +114,10 @@ export class Expression {
       dev = 12 * (l - this.ref);
       wobble = 12 * (l - this.fast);
     } else this.held = 0;
-    const browTo = (voiced ? clamp(dev / 6, -0.7, 1) : 0) + 0.3 * this.content;
+    // the mood, eased in over about half a second
+    const M = this.held2;
+    for (const key of ["smile", "brow", "lid", "tilt"] as const) M[key] = follow(M[key], this.mood[key], 0.45, dt);
+    const browTo = clamp((voiced ? clamp(dev / 4, -0.8, 1) : 0) + M.brow + 0.3 * this.content, -1, 1.2);
     this.brow = follow(this.brow, browTo, voiced ? 0.12 : 0.45, dt);
     this.lookUp = 0.32 * Math.max(0, this.brow);
 
@@ -121,7 +132,17 @@ export class Expression {
     }
     const b = (this.clock - this.blinkAt) / 0.17;
     const blink = this.blinkAt >= 0 && b < 1 ? Math.sin(Math.PI * b) ** 0.7 : 0;
-    this.lid = Math.max(blink, this.hold, 0.95 * this.content);
+    this.lid = clamp(Math.max(blink, this.hold, 0.95 * this.content) + M.lid * (1 - blink), -0.4, 1);
+
+    // ---- the mouth: the mood's smile, and a brief warm one each time a sentence ends (the voice
+    // falls quiet after saying something)
+    if (voiced) {
+      this.said = Math.min(1, this.said + dt / 0.8);
+      this.quiet = 0;
+    } else this.quiet += dt;
+    const after = this.said * smooth(0.12, 0.3, this.quiet) * (1 - smooth(0.9, 1.8, this.quiet));
+    if (this.quiet > 1.8) this.said = 0;
+    this.smile = follow(this.smile, clamp(M.smile + 0.45 * after * (M.smile > -0.2 ? 1 : 0.3), -1, 1.1), 0.18, dt);
 
     // ---- the 3D head: chin up for high notes, a nod on the beat, a sway on a long note, the vibrato's wobble
     // a nod for each beat (four steps) the sequencer passed since the last frame, the bar's first the
@@ -134,6 +155,6 @@ export class Expression {
     this.lastStep = step;
     this.nod = this.nodSpring.step(0.13 * this.brow, dt);
     const sway = smooth(0.6, 2, this.held) * 0.07 * Math.sin(this.clock * 1.7);
-    this.tilt = this.tiltSpring.step(sway + 0.05 * clamp(wobble, -1.5, 1.5), dt);
+    this.tilt = this.tiltSpring.step(sway + 0.05 * clamp(wobble, -1.5, 1.5) + M.tilt, dt);
   }
 }

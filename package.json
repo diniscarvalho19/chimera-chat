@@ -1,5 +1,5 @@
 {
-  "name": "chimera-voice",
+  "name": "chimera-chat",
   "private": true,
   "version": "0.1.0",
   "license": "MIT",
@@ -7,11 +7,10 @@
   "scripts": {
     "dev": "bun run wasm && vite --host 127.0.0.1",
     "build": "bun run wasm && tsc --noEmit && vite build",
-    "preview": "vite preview --host 127.0.0.1",
     "test": "bun run wasm && cargo test --workspace && bun test tests",
     "typecheck": "tsc --noEmit",
-    "lint:layout": "bun run wasm && bun tools/layout-lint.ts",
-    "wasm": "cargo build -p chimera-wasm --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm"
+    "wasm": "cargo build -p chimera-wasm --release --target wasm32-unknown-unknown && cp target/wasm32-unknown-unknown/release/chimera_wasm.wasm src/wasm/chimera.wasm",
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "react": "19.3.1",
@@ -25,7 +24,6 @@
     "@types/react-dom": "19.3.0",
     "@types/three": "0.186.0",
     "@vitejs/plugin-react": "6.2.1",
-    "playwright-core": "1.64.1",
     "typescript": "7.0.2",
     "vite": "8.3.6"
   }

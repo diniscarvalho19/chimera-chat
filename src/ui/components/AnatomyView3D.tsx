@@ -15,6 +15,7 @@ import { Glow, label } from "../render/vector.ts";
 import { engine } from "../../audio/AudioEngine.ts";
 import { sameBody } from "../body.ts";
 import { useStore } from "../store.ts";
+import { MOOD } from "../mood.ts";
 import { VoiceModel } from "../analysis.ts";
 import { useModel } from "../useModel.ts";
 import { V } from "../colors.ts";
@@ -190,6 +191,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
       }
       const view = feed ? feed.view : st.view;
       r.face.content = pet.content;
+      r.face.mood = MOOD[useStore.getState().mood].face;
       r.face.update(tele, elapsed);
       const m = feed ? feed.model : model.current;
       if (m && w > 0 && h > 0) {
