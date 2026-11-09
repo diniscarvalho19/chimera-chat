@@ -10,6 +10,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Anatomy3D } from "../render/anatomy3d.ts";
 import { loadSkin } from "../render/skin3d.ts";
+import { Choir } from "../render/choir.ts";
 import { Petting } from "../render/petting.ts";
 import { drawReadouts } from "../render/readouts.ts";
 import { Glow, label } from "../render/vector.ts";
@@ -81,6 +82,8 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
     let gone = false;
     loadSkin(gl).then((skin) => !gone && r.setSkin(skin), (err) => console.warn("face:", err));
     const glow = new Glow();
+    /** a found song's other singers, under the head */
+    const choir = new Choir();
     const camera = r.camera;
     const controls = new OrbitControls(camera, canvas);
     controls.enableDamping = true;
@@ -249,6 +252,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
         pet.draw(ctx, r.facing, crown.cmPx);
         // the glow is the lines' halo: the face alone does without it (half the frame's cost)
         if (r.linesShown) glow.apply(canvas, ctx, dpr);
+        choir.draw(ctx, w, h, dpr, elapsed);
       }
       raf = requestAnimationFrame(loop);
     };
@@ -262,6 +266,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
       canvas.removeEventListener("pointerleave", offHead);
       controls.dispose();
       r.dispose();
+      choir.dispose();
       gl.dispose();
       // browsers allow few live WebGL contexts: give this one back now, not at garbage collection
       gl.forceContextLoss();

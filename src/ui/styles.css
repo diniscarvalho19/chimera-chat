@@ -681,56 +681,6 @@ button.ghost:hover,
   min-height: 420px;
 }
 
-/* the head fills what the other singers' faces (in flow, under it) leave */
-.head-stage {
-  position: relative;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.choir {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 18px;
-  padding: 6px 12px 12px;
-  border-top: 1px solid var(--blue-dim);
-}
-
-.choir-face {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  width: 96px;
-}
-
-.choir-face canvas {
-  display: block;
-}
-
-.choir-face figcaption {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  font-size: 10px;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.choir-name {
-  color: var(--text-dim);
-}
-
-.choir-word {
-  color: var(--white);
-  min-height: 1.2em;
-  text-transform: none;
-  letter-spacing: 0.04em;
-  font-size: 12px;
-}
-
 /* view options as chips in the face screen's header */
 
 .view-toggles {
@@ -907,7 +857,18 @@ input[type="range"]::-moz-range-thumb {
 
 .chat-error { align-self: stretch; border-color: var(--red, #f55); color: var(--red, #f55); }
 
-.chat-thinking { opacity: 0.6; }
+.chat-thinking {
+  opacity: 0.6;
+  animation: chat-wait 1.6s ease-in-out infinite;
+}
+
+@keyframes chat-wait {
+  50% { opacity: 0.3; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-thinking { animation: none; }
+}
 
 .chat-input textarea {
   flex: 1;

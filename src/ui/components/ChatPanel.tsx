@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MOUTH_OPEN, MOUTH_SHUT, useStore } from "../store.ts";
-import { speakText, singSong, stopSpeaking, currentPlan, planNow } from "../speech.ts";
+import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p } from "../speech.ts";
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
@@ -141,6 +141,18 @@ export function ChatRight() {
   }, [cloud, model]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  /** what the reply is waiting on, said in the chat while it waits */
+  const [status, setStatus] = useState("Thinking…");
+  // the model can take a while (the on-device one most): say so as the wait grows
+  useEffect(() => {
+    if (status !== "Thinking…") return;
+    const t1 = setTimeout(() => setStatus((s) => (s === "Thinking…" ? "Still thinking…" : s)), 6000);
+    const t2 = setTimeout(() => setStatus((s) => (s === "Still thinking…" ? (local ? "Still thinking… the on-device model takes its time" : "Still thinking… the model is slow today") : s)), 15000);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [status, local]);
   useEffect(() => useStore.setState({ thinking: busy }), [busy]);
   const [rec, setRec] = useState<Recognition | null>(null);
   /** dictate into the box (the voice stops first: the mic would hear it) */
@@ -271,14 +283,23 @@ export function ChatRight() {
     setBusy(true);
     push({ role: "user", text: message, shown: message.length });
     try {
+      if (!useStore.getState().started) setStatus("Waking up the voice…");
       await start();
       const err = useStore.getState().startError;
       if (err) throw new Error(`Audio could not start: ${err}`);
+      if (/\b(sing|song|songs)\b/i.test(message)) setStatus("Looking through the songbook…");
       const prompt = await withSongbook(message, msgs.filter((m) => m.role === "user").at(-1)?.text);
+      setStatus("Thinking…");
       const reply = local ? await aiPrompt(prompt) : await orPrompt(prompt, model);
       const clean = reply.replace(/’/g, "'");
       // songs asked for by name: their scores, from the songbook
-      const found = new Map(await Promise.all(songRefs(clean).map(async (q) => [q, (await findSong(q))?.song ?? null] as const)));
+      const refs = songRefs(clean);
+      if (refs.length) setStatus(`Finding the music for ${refs.map((r) => `“${r.replace(/\s+[-–—]\s+.*$/, "")}”`).join(" and ")}…`);
+      const found = new Map(await Promise.all(refs.map(async (q) => [q, (await findSong(q))?.song ?? null] as const)));
+      if (!g2p.loaded) {
+        setStatus("Getting the words ready…");
+        await g2p.load().catch(() => {}); // the letter-to-sound rules still work
+      }
       const { display, songs } = extractSongs(clean, found);
       // asked for harmony: up to two backing singers on every song that has fewer of its own
       if (HARMONY.test(message))
@@ -296,6 +317,7 @@ export function ChatRight() {
     } finally {
       setCloud(!!orKey());
       setBusy(false);
+      setStatus("Thinking…");
     }
   };
 
@@ -323,7 +345,11 @@ export function ChatRight() {
                 {m.text.slice(0, m.shown)}
               </div>
             ))}
-            {busy && <div className="chat-msg chat-assistant chat-thinking">Thinking…</div>}
+            {busy && (
+              <div className="chat-msg chat-assistant chat-thinking" role="status">
+                {status}
+              </div>
+            )}
           </div>
           <div className="chat-input">
             <textarea

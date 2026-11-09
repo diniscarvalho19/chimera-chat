@@ -18,7 +18,8 @@ copy it back unless it serves the chat or the face.
   and converted in the browser by `src/ui/musicxml.ts`. `tools/build-songbook.ts` builds the songbook
   from PDMX (MuseScore scores marked public domain or CC0).
   A score's other parts are the band (`playParts` in `src/ui/backing.ts`); its other sung parts are
-  sung by extra worklet nodes (`AudioEngine.singChoir`), shown as small faces (`ChoirFaces.tsx`).
+  sung by extra worklet nodes (`AudioEngine.singChoir`), drawn as small heads under the main one
+  (`src/ui/render/choir.ts`).
 - `src/ui/components/AnatomyView3D.tsx`, `src/ui/render/`: the head (3D, facing the viewer).
 - `src/wasm/`: the UI's facade over the engine. `src/worklet/`: the AudioWorklet.
 

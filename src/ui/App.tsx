@@ -3,7 +3,6 @@ import { useStore } from "./store.ts";
 import { engine } from "../audio/AudioEngine.ts";
 import { Segmented } from "./components/Controls.tsx";
 import { Chip, Screen } from "./components/Screen.tsx";
-import { ChoirFaces } from "./components/ChoirFaces.tsx";
 import { ChatRight } from "./components/ChatPanel.tsx";
 import type { BodyName } from "../worklet/protocol.ts";
 import { bodyLabel, presetOf, PRESETS } from "./body.ts";
@@ -81,12 +80,9 @@ function LeftScreen() {
         </Chip>
       }
     >
-      <div className="head-stage">
-        <Suspense fallback={null}>
-          <AnatomyView3D readouts={false} />
-        </Suspense>
-      </div>
-      <ChoirFaces />
+      <Suspense fallback={null}>
+        <AnatomyView3D readouts={false} />
+      </Suspense>
     </Screen>
   );
 }
