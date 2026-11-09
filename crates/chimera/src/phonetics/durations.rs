@@ -2,7 +2,8 @@
 //!   DUR = MIN + (INH − MIN) · PRCNT
 //! with PRCNT the product of context factors: phrase-final lengthening, non-final shortening,
 //! non-word-final and polysyllabic shortening, unstressed shortening (MIN halved), the vowel
-//! length cue of the following consonant (bat/bad), cluster shortening, and aspiration.
+//! length cue of the following consonant (bat/bad), cluster shortening, and aspiration. A vowel and
+//! the /ɹ/ after it in its syllable share the span Klatt gives the nucleus.
 //! Inherent / minimum durations (ms) per phoneme follow Klatt's table.
 
 use super::Segment;
@@ -44,8 +45,10 @@ fn table(ipa: &str) -> Option<(f64, f64)> {
         "d" => (75.0, 50.0),
         "g" => (80.0, 60.0),
         "ʔ" => (40.0, 30.0),
-        "tʃ" => (70.0, 50.0),
-        "dʒ" => (50.0, 30.0),
+        // not Klatt's 70/50 and 50/30, which can't hold a closure and its frication (his /t/ alone is 75):
+        // the TSP speakers' phones, /tʃ/ 125-140 ms and /dʒ/ 100-110, with Klatt's ratios of minimum to inherent
+        "tʃ" => (125.0, 88.0),
+        "dʒ" => (100.0, 60.0),
         "f" => (100.0, 80.0),
         "v" => (60.0, 40.0),
         "θ" => (90.0, 60.0),
@@ -67,6 +70,9 @@ fn table(ipa: &str) -> Option<(f64, f64)> {
         _ => return None,
     })
 }
+
+/// The least left of a vowel in a vowel + /ɹ/ nucleus (s): Klatt's shortest vowel minimum, /ɪ/'s.
+const NUCLEUS_VOWEL_MIN: f64 = 0.04;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,7 +113,8 @@ pub fn klatt_durations(segs: &[Segment], info: impl Fn(&Segment) -> SegInfo) -> 
         }
     }
 
-    segs.iter()
+    let mut durs: Vec<f64> = segs
+        .iter()
         .enumerate()
         .map(|(i, s)| {
             if let Some(d) = s.dur {
@@ -188,5 +195,15 @@ pub fn klatt_durations(segs: &[Segment], info: impl Fn(&Segment) -> SegInfo) -> 
             }
             (min + (inh - min) * p) / 1000.0
         })
-        .collect()
+        .collect();
+    // Klatt transcribes a vowel and its /ɹ/ as one nucleus (/AR/ "bar", /OR/ "boar"...), where the
+    // G2P gives two segments: without this the pair gets the vowel's whole span and the /ɹ/'s on top
+    for i in 0..n.saturating_sub(1) {
+        // (a vowel in the next word doesn't make it an onset: "car is" has "car"'s nucleus)
+        let coda = i + 2 >= n || word[i + 2] != word[i + 1] || !inf[i + 2].vowel;
+        if inf[i].vowel && segs[i + 1].ipa == "ɹ" && word[i + 1] == word[i] && coda && segs[i].dur.is_none() && segs[i + 1].dur.is_none() {
+            durs[i] = (durs[i] - durs[i + 1]).max(NUCLEUS_VOWEL_MIN);
+        }
+    }
+    durs
 }

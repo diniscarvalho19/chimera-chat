@@ -42,6 +42,8 @@ fn deserializes_from_a_name_or_a_mix() {
 fn blends_land_between_the_presets() {
     let mid = BodyMix::new(0.5, 0.0);
     assert!((mid.body().scale - 0.95).abs() < 1e-12);
+    assert!(between(mid.body().fold_length, BODY_MALE.fold_length, BODY_FEMALE.fold_length));
+    assert!(between(mid.body().open_phase, BODY_MALE.open_phase, BODY_FEMALE.open_phase));
     assert!(default_f0(mid) > 110.0 && default_f0(mid) < 205.0);
     // calibrated targets: each key between the two presets'
     for v in ["i", "a", "u"] {

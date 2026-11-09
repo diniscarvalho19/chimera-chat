@@ -63,6 +63,10 @@ export interface HumanBody {
   tongueRadius: number;
   /** max lip width (cm, before scale) */
   lipWidth: number;
+  /** length of the membranous vocal fold, the part that vibrates (1 = adult male) */
+  foldLength: number;
+  /** how much more of the cycle the folds spend apart than an adult man's (0.13 = 13 points of open quotient) */
+  openPhase: number;
 }
 
 export interface ArticSpec {

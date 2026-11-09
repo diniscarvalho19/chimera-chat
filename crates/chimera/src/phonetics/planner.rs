@@ -6,7 +6,7 @@
 //! sequencer) builds into a caller's `Vec` and allocates nothing once it has capacity.
 
 use super::durations::{SegInfo, klatt_durations};
-use super::inventory::{Glottal, Manner, PhonemeDef, Voicing, phoneme};
+use super::inventory::{Glottal, Manner, PhonemeDef, Voicing, dental_closure, phoneme};
 use super::{Intonation, Plan, PlannedSegment, Segment};
 use crate::anatomy::human::{ArticKey, ArticPatch, BodyMix, BodyName};
 use crate::control::score::{ControlKey, Gesture, Targets};
@@ -20,6 +20,17 @@ pub const EXHALE_LABEL: &str = "exhale";
 
 /// when a sung phrase's breath reaches full drive, after the plan start (its first segment starts at 0.06)
 const BREATH_SUNG_AT: f64 = 0.06;
+
+/// How far a voiced fricative's folds part (cm², scaled with the body in the voice). Frication and
+/// voicing share the lung pressure, which takes a glottis about as wide as the constriction
+/// (Stevens 1971; Elie & Laprie's "regime B"). Here that is a mean glottal area of about 0.13 cm²,
+/// through constrictions of 0.10-0.18. The pressure behind the constriction then rises and the
+/// voicing weakens by itself, most in /z/, whose constriction is the narrowest. 0.12-0.14 match the
+/// TSP speakers' voicing better; `an_f_does_not_click` stops them (hill-climb log, experiments 23 and 32).
+const VOICED_FRICATIVE_OPENING: f64 = 0.09;
+/// /ð/ after a nasal keeps a small opening: the speakers' has no dip there, nasal level throughout, and
+/// this reads about their level (hill-climb log, experiment 24).
+const DH_OPENING: f64 = 0.035;
 
 const VOWEL_KEYS: [ArticKey; 9] = [ArticKey::TbX, ArticKey::TbY, ArticKey::Jaw, ArticKey::LipAp, ArticKey::LipProt, ArticKey::LipWidth, ArticKey::Root, ArticKey::Larynx, ArticKey::TtCurl];
 
@@ -210,6 +221,17 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             s.def = phoneme(s.ipa, body);
         }
     }
+    for i in 0..segs.len() {
+        // (a pause: the utterance's start, or an explicit one, the `_` of IPA's `|` or a comma)
+        let after_pause_or_obstruent = i == 0 || segs[i - 1].ipa == "_" || segs[i - 1].def.is_some_and(|d| matches!(d.manner, Manner::Stop | Manner::Affricate | Manner::Fricative));
+        if segs[i].ipa == "ð" && after_pause_or_obstruent {
+            // /ð/ after a pause, a stop, an affricate or a fricative is a silent dental closure and a
+            // weak burst (Zhao 2010; the TSP speakers, hill-climb log, experiment 24). Its span stays Klatt's.
+            let d = segs[i].def.as_mut().unwrap();
+            d.manner = Manner::Stop;
+            d.targets = dental_closure();
+        }
+    }
     let mut gestures: Vec<Gesture> = Vec::new();
     let mut planned: Vec<PlannedSegment> = Vec::with_capacity(segs.len());
     let mut t = o.t0 + 0.06; // breath onset lead
@@ -270,7 +292,8 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             // The delay leaves the closure 30 ms before its release (its 10 ms minimum hold and
             // its ~20 ms early release), so a short sung stop isn't pushed past its own end.
             Manner::Stop if pre_placed_behind_closure(&segs, i) => add_oral(&def.targets, t0 + js_min(PLACED_CLOSURE_DELAY, js_max(0.0, dur - 0.03)), t1, 1.55, def.ipa),
-            Manner::Stop | Manner::Nasal => add_oral(&def.targets, t0, t1, 1.55, def.ipa),
+            Manner::Stop => add_oral(&def.targets, t0 + js_min(stop_closure_delay(def.place, prev_seg), js_max(0.0, dur - 0.03)), t1, 1.55, def.ipa),
+            Manner::Nasal => add_oral(&def.targets, t0 + js_min(nasal_closure_delay(def.place), js_max(0.0, dur - 0.03)), t1, 1.55, def.ipa),
             Manner::Tap => add_oral(&def.targets, t0, t1, 2.8, def.ipa),
             Manner::Trill => {
                 // driven trill: rapid alternation of near-closure and release at ~26 Hz
@@ -283,31 +306,47 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
                 }
             }
             Manner::Affricate => {
-                let split = t0 + dur * 0.55;
+                let split = t0 + dur * AFFRICATE_CLOSURE;
                 add_oral(&def.targets, t0, split, 2.0, def.ipa);
-                let rel = def.release.and_then(|r| phoneme(r, body));
-                if let Some(rel) = rel {
-                    add_oral(&rel.targets, split + 0.008, t1, 1.4, def.ipa);
+                // the release is the fricative's own gesture, not a contact release's: it takes
+                // the fricative's articulators (the jaw too) and holds to the span's end, where
+                // the folds have closed (below). Its 8 ms lead hands over from the closure. A span
+                // squeezed under 33 ms (a fast sung note) starts it with the span, not before.
+                if let Some(rel) = def.release.and_then(|r| phoneme(r, body)) {
+                    oral_gestures_into(&rel, &rel.targets, js_max(t0, split - 0.015), t1, 1.4, def.ipa, &mut gestures);
                 }
             }
             Manner::Fricative | Manner::Approximant | Manner::Lateral => add_oral(&def.targets, t0, t1, 1.3, def.ipa),
             Manner::Glottal | Manner::Vowel => {}
         }
-        // nasality: the velum lowers in anticipation (into the preceding vowel, as in English) and
-        // seals again by the end of the nasal; 0.45 cm² is ample for the murmur
+        // nasality: the velum lowers in anticipation (into the preceding vowel, as in English). The
+        // port opens about 37 ms before the span and seals about 29 ms after it, as its lag isn't
+        // compensated. 0.45 cm² is ample for the murmur. Before a voiced stop it seals about 44 ms
+        // after: the velum's offset is later than before a voiceless one (Beddor 2007), and the
+        // speakers' murmur before /d b g/ falls 10-20 ms later than one sealed at 29 (hill-climb log,
+        // experiments 25 and 26).
         if def.nasal == Some(true) {
-            gestures.push(Gesture::new(t0 - 0.02, t1 - 0.02, 0.05, 0.03, 4.0, one(ArticKey::Velum, 0.45)).label("velum"));
+            let before_voiced_stop = segs.get(i + 1).and_then(|n| n.def.as_ref()).is_some_and(|d| d.manner == Manner::Stop && d.voicing == Voicing::Voiced);
+            let seal = if before_voiced_stop { t1 - 0.005 } else { t1 - 0.02 };
+            gestures.push(Gesture::new(t0 - 0.02, seal, 0.05, 0.03, 4.0, one(ArticKey::Velum, 0.45)).label("velum"));
         }
         // phonation
         let k2 = 1.0; // abduction is body-scaled in the voice
         if def.glottal == Some(Glottal::Open) {
-            gestures.push(Gesture::new(t0 - 0.01, t1, 0.03, 0.035, 5.0, one(ControlKey::ABDUCTION, 0.33 * k2)).label("h"));
+            // the folds close 10 ms before the span's end: with the lungs' port fixed, /h/ is 4-5 dB louder and MFA
+            // reads it about that much longer than the speakers' (hill-climb log, experiment 32)
+            gestures.push(Gesture::new(t0 - 0.01, t1 - 0.01, 0.03, 0.035, 5.0, one(ControlKey::ABDUCTION, 0.33 * k2)).label("h"));
         } else if def.glottal == Some(Glottal::Breathy) {
             gestures.push(Gesture::new(t0, t1, 0.03, 0.03, 5.0, one(ControlKey::ABDUCTION, 0.1 * k2)).label("ɦ"));
         } else if def.glottal == Some(Glottal::Stop) {
             gestures.push(Gesture::new(t0, t1, 0.012, 0.015, 8.0, one(ControlKey::CLOSURE, 1.0)).label("ʔ"));
         } else if def.voicing == Voicing::Voiceless {
-            if def.manner == Manner::Stop || def.manner == Manner::Affricate {
+            if def.manner == Manner::Affricate {
+                // apart from the closure on, and together again as the frication ends: in an
+                // affricate the frication is the voice onset time, with no [h] after it, and the
+                // vowel keeps its planned length
+                gestures.push(affricate_folds(t0 + 0.15 * dur, t1).label("aspiration"));
+            } else if def.manner == Manner::Stop {
                 // aspirated when syllable-initial before a vowel and not after /s/ (English-like)
                 let aspirated = next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s");
                 let vot = if aspirated { 0.05 / rate } else { 0.012 };
@@ -315,8 +354,21 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             } else {
                 gestures.push(Gesture::new(t0 - 0.015, t1 + 0.005, 0.03, 0.03, 6.0, one(ControlKey::ABDUCTION, 0.3)).label("voiceless"));
             }
+        } else if def.ipa == "ð" && def.manner == Manner::Stop {
+            // apart behind the closure, so it is silent and the voice follows the release by 15-20 ms
+            // as the speakers' does. The opening is /v z/'s constant, not a measured one (experiment 24)
+            gestures.push(Gesture::new(t0 - 0.015, t1, 0.03, 0.03, 6.0, one(ControlKey::ABDUCTION, VOICED_FRICATIVE_OPENING)).label("stop-like ð"));
         } else if def.manner == Manner::Fricative {
-            gestures.push(Gesture::new(t0, t1, 0.03, 0.03, 3.0, one(ControlKey::ABDUCTION, 0.035)).label("voiced frication"));
+            // the folds start to part when a voiceless fricative's do, and close as the constriction
+            // opens (about 20 ms after t1, for both)
+            let after_nasal = prev_seg.and_then(|p| p.def.as_ref()).is_some_and(|d| d.manner == Manner::Nasal);
+            let opening = if def.ipa == "ð" && after_nasal { DH_OPENING } else { VOICED_FRICATIVE_OPENING };
+            gestures.push(Gesture::new(t0 - 0.015, t1, 0.03, 0.03, 3.0, one(ControlKey::ABDUCTION, opening)).label("voiced frication"));
+        } else if def.manner == Manner::Affricate {
+            // the speakers' /dʒ/ differs from their /tʃ/ at its ends, not its frication: voice carries into
+            // the closure and fades there, and the frication is as loud and as voiceless as /tʃ/'s
+            // (hill-climb log, experiment 29). So the same folds, parted only for the release.
+            gestures.push(affricate_folds(t0 + dur * AFFRICATE_CLOSURE, t1).label("voiced affricate"));
         }
     }
     let open_end = o.open_end == Some(true);
@@ -398,6 +450,58 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     Plan { gestures, segments: planned, end }
 }
 
+/// The share of an affricate's span that is closure, the rest being frication (the TSP speakers'
+/// /tʃ/: about 55 ms of closure, 60-65 ms of frication and a fading tail; their /dʒ/: 45-55, about 45).
+const AFFRICATE_CLOSURE: f64 = 0.45;
+
+/// An affricate's folds: apart by `open` for the frication, and together again by `t1`, as it ends. A
+/// span too short for the 30 ms closing (a fast sung note) closes faster, so the breath doesn't spill
+/// into the vowel.
+fn affricate_folds(open: f64, t1: f64) -> Gesture {
+    let (hold, closing) = if t1 - open > 0.03 { (t1 - 0.03, 0.03) } else { (open, t1 - open) };
+    Gesture::new(open, hold, 0.035, closing, 6.0, one(ControlKey::ABDUCTION, 0.36))
+}
+
+/// How much later a nasal's closure is aimed than its span's start (s). `oral_gestures_into` brings
+/// contact to about its `a` (a median 0-9 ms early in running speech), but a nasal is heard from when
+/// the oral area falls under about 0.05 cm², when the sound has already left for the nose, and that
+/// is where MFA starts it on a render: a median 7-13 ms before the span at the lips, 14-18 at the
+/// tip, 19-20 at the dorsum. Klatt's durations are acoustic, so a span starts where it sounds closed
+/// (hill-climb log, experiment 25). A short sung nasal keeps the 30 ms a stop's delay leaves.
+fn nasal_closure_delay(place: &str) -> f64 {
+    match place {
+        "bilabial" | "labiodental" => 0.01,
+        "velar" | "uvular" | "palatal" => 0.02,
+        _ => 0.015,
+    }
+}
+
+/// How much later a stop's closure is aimed than its span's start (s), where the sound before it runs
+/// up to the closure. `oral_gestures_into` brings contact to about its `a`, and the sound has gone by
+/// then. After a vowel the level is 10 dB down and MFA starts the stop a median 3-8 ms before the span
+/// at the lips, 13-27 at the tip, 9-15 at the dorsum, with the voicing and the body making no steady
+/// difference. A nasal's numbers don't carry over: a lip closure stays loud until nearly shut, and
+/// a nasal's sound leaves for the nose. After a sibilant the noise falls as the closing area nears its
+/// channel's, and at the tip the tongue is already up: 16-23, 25-35, 14-21. Nothing to aim for
+/// otherwise: a pause, stop or nasal before it has nothing running up to the closure, /f t/ closes on
+/// time, and after /ɹ l/ the tip closes late already (hill-climb log, experiment 26). The tip's 19 centres its fall
+/// in running speech with the lungs' port fixed (experiment 32).
+fn stop_closure_delay(place: &str, prev: Option<&Seg>) -> f64 {
+    let Some(prev) = prev else { return 0.0 };
+    let (lips, tip, dorsum) = if prev.vowel.is_some() {
+        (0.005, 0.019, 0.015)
+    } else if matches!(prev.ipa, "s" | "z" | "ʃ" | "ʒ") {
+        (0.02, 0.03, 0.02)
+    } else {
+        return 0.0;
+    };
+    match place {
+        "bilabial" | "labiodental" => lips,
+        "velar" | "uvular" | "palatal" => dorsum,
+        _ => tip,
+    }
+}
+
 /// Front-to-back order of the oral places of articulation.
 fn place_rank(place: &str) -> Option<u8> {
     Some(match place {
@@ -447,7 +551,8 @@ fn pitch_ramp(dur: f64) -> f64 {
 
 /// Oral gestures for one consonant constriction held acoustically from `a` to `b` (closure to
 /// release): a dominant gesture on the consonant's own articulators and a weak one on the rest.
-/// Movement latencies are compensated so the acoustic closure and release land on a and b.
+/// Movement latencies are compensated so that contact and the acoustic release land about on a and
+/// b. The closure is heard earlier than contact: see `nasal_closure_delay`, `stop_closure_delay`.
 pub fn oral_gestures(def: &PhonemeDef, tg: &ArticPatch, a: f64, b: f64, speed: f64, label: &str) -> Vec<Gesture> {
     let mut out = Vec::with_capacity(4);
     oral_gestures_into(def, tg, a, b, speed, label, &mut out);
