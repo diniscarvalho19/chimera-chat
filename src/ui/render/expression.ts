@@ -67,6 +67,18 @@ export class Expression {
   /** the mood the face holds (set by the view; the face eases into it) */
   mood = { smile: 0, brow: 0, lid: 0, tilt: 0 };
   private held2 = { smile: 0, brow: 0, lid: 0, tilt: 0 };
+  /** waiting for an answer (set by the view) */
+  thinking = false;
+  /** how far into the thinking look (0..1): eyes up and aside, a brow up, lips pressed, head tilted */
+  think = 0;
+  /** while thinking, where the eyes look (radians: up +, towards the head's left +); they dart to
+   *  a new place every second or two and the head turns after them */
+  lookPitch = 0.35;
+  lookYaw = 0.45;
+  private nextLook = 0;
+  /** 3D head: turned (radians, the same way as lookYaw) */
+  turn = 0;
+  private readonly turnSpring = new Spring(1.6, 0.55);
   /** since the voice last sounded (s), and how much it said before falling quiet */
   private quiet = 0;
   private said = 0;
@@ -116,7 +128,17 @@ export class Expression {
     } else this.held = 0;
     // the mood, eased in over about half a second
     const M = this.held2;
-    for (const key of ["smile", "brow", "lid", "tilt"] as const) M[key] = follow(M[key], this.mood[key], 0.45, dt);
+    this.think = follow(this.think, this.thinking ? 1 : 0, this.thinking ? 0.35 : 0.2, dt);
+    if (this.thinking && this.clock >= this.nextLook) {
+      // somewhere else: mostly up and to a side (the other side more often than not), now and then down
+      const side = (this.lookYaw > 0 ? -1 : 1) * (Math.random() < 0.75 ? 1 : -1);
+      this.lookYaw = side * (0.25 + Math.random() * 0.4);
+      this.lookPitch = Math.random() < 0.2 ? -0.1 - Math.random() * 0.12 : 0.15 + Math.random() * 0.3;
+      this.nextLook = this.clock + 1 + Math.random() * 1.6;
+    }
+    // ponytail: thinking is one fixed pose added on the mood; vary it if it looks canned
+    const T = { smile: -0.25, brow: 0.35, lid: 0.12, tilt: 0.1 };
+    for (const key of ["smile", "brow", "lid", "tilt"] as const) M[key] = follow(M[key], this.mood[key] + this.think * T[key], 0.45, dt);
     const browTo = clamp((voiced ? clamp(dev / 4, -0.8, 1) : 0) + M.brow + 0.3 * this.content, -1, 1.2);
     this.brow = follow(this.brow, browTo, voiced ? 0.12 : 0.45, dt);
     this.lookUp = 0.32 * Math.max(0, this.brow);
@@ -153,8 +175,10 @@ export class Expression {
       if (wrapped || Math.floor(step / 4) !== Math.floor(this.lastStep / 4)) this.nodSpring.v -= wrapped || Math.floor(step / 16) !== Math.floor(this.lastStep / 16) ? 1.3 : 0.8;
     }
     this.lastStep = step;
-    this.nod = this.nodSpring.step(0.13 * this.brow, dt);
+    // thinking: the head follows the eyes, part of the way and a beat behind
+    this.nod = this.nodSpring.step(0.13 * this.brow + this.think * 0.3 * this.lookPitch, dt);
+    this.turn = this.turnSpring.step(this.think * 0.45 * this.lookYaw, dt);
     const sway = smooth(0.6, 2, this.held) * 0.07 * Math.sin(this.clock * 1.7);
-    this.tilt = this.tiltSpring.step(sway + 0.05 * clamp(wobble, -1.5, 1.5) + M.tilt, dt);
+    this.tilt = this.tiltSpring.step(sway + 0.05 * clamp(wobble, -1.5, 1.5) + M.tilt + this.think * 0.12 * this.lookYaw, dt);
   }
 }

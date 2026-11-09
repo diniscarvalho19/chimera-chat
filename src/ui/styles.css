@@ -251,36 +251,6 @@ button.primary.large {
   color: var(--text-dim);
 }
 
-.start-prompt {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  transform: translate(-50%, -50%);
-  max-width: 360px;
-  padding: 22px 24px;
-  background: rgba(10, 12, 14, 0.82);
-  border: 1px solid var(--line);
-  border-radius: var(--radius-m);
-  text-align: center;
-  backdrop-filter: blur(3px);
-}
-
-.start-prompt p {
-  margin: 0 0 14px;
-}
-
-.start-prompt .hint {
-  margin: 14px 0 0;
-  color: var(--text-dim);
-  font-size: 14px;
-}
-
-.start-prompt .error {
-  margin: 14px 0 0;
-  color: #ffb4a0;
-  font-size: 14px;
-}
-
 .slider label {
   display: flex;
   justify-content: space-between;
@@ -711,6 +681,56 @@ button.ghost:hover,
   min-height: 420px;
 }
 
+/* the head fills what the other singers' faces (in flow, under it) leave */
+.head-stage {
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.choir {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 18px;
+  padding: 6px 12px 12px;
+  border-top: 1px solid var(--blue-dim);
+}
+
+.choir-face {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  width: 96px;
+}
+
+.choir-face canvas {
+  display: block;
+}
+
+.choir-face figcaption {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.choir-name {
+  color: var(--text-dim);
+}
+
+.choir-word {
+  color: var(--white);
+  min-height: 1.2em;
+  text-transform: none;
+  letter-spacing: 0.04em;
+  font-size: 12px;
+}
+
 /* view options as chips in the face screen's header */
 
 .view-toggles {
@@ -751,33 +771,6 @@ button.ghost:hover,
 .screen-tools .toggle input:focus-visible + span {
   outline: 1px dashed var(--blue);
   outline-offset: 1px;
-}
-
-/* the start prompt, over the left screen */
-
-.start-prompt {
-  background: rgba(0, 0, 0, 0.88);
-  border: 1px solid var(--blue-dim);
-  border-radius: 0;
-  backdrop-filter: none;
-  max-width: 380px;
-  padding: 22px 26px;
-  box-shadow: 0 0 10px rgba(79, 182, 242, 0.15);
-}
-
-.start-prompt p {
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-dim);
-}
-
-.start-prompt .hint {
-  font-size: 11px;
-  color: var(--text-dim);
-}
-
-.start-prompt .error {
-  color: var(--red);
 }
 
 .screen-tools .chip {
@@ -867,33 +860,6 @@ input[type="range"]::-moz-range-thumb {
 
 .left .screen-body {
     min-height: 118vw;
-  }
-}
-
-.say-row {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  min-width: 0;
-}
-
-.say-actions {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.say-actions button {
-  min-width: 84px;
-}
-
-@media (max-width: 640px) {
-.say-row {
-    flex-wrap: wrap;
-  }
-
-.say-actions {
-    flex-direction: row;
   }
 }
 
@@ -993,4 +959,165 @@ input[type="range"]::-moz-range-thumb {
 
 .ai-progress::-moz-progress-bar {
   background: var(--blue);
+}
+
+/* ---------- phone: the face and the chat share one screen, the face on top. The page doesn't
+   scroll, the chat log does; the keyboard shrinks both (interactive-widget in index.html). */
+
+@media (max-width: 640px) {
+.app {
+    height: 100dvh;
+    min-height: 0;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+.wall-chat {
+    grid-template-rows: minmax(0, 2fr) minmax(0, 3fr);
+    min-height: 0;
+    gap: 8px;
+  }
+
+.wall-chat .left .screen-body,
+  .right-chat,
+  .right-chat .screen-body,
+  .chat-log {
+    min-height: 0;
+  }
+
+/* one screen: the face hovers over the chat, no frames or headers between them */
+.wall-chat {
+    gap: 0;
+    border: 1px solid var(--blue-dim);
+  }
+
+.wall-chat .screen {
+    border: none;
+  }
+
+.wall-chat .screen-head {
+    display: none;
+  }
+
+/* messages fade out under the face as they scroll up */
+.chat-log {
+    mask-image: linear-gradient(to bottom, transparent, #000 28px);
+  }
+
+/* 16px: iOS zooms into a smaller input on focus */
+.chat-input textarea {
+    font-size: 16px;
+  }
+}
+
+/* the message box: the text on top, a bar under it (model, mic, send), one rounded frame */
+
+.chat-input {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 8px 12px;
+  border: 1px solid var(--frame);
+  border-radius: 14px;
+}
+
+.chat-input:focus-within {
+  border-color: var(--blue-dim);
+}
+
+.chat-input textarea {
+  width: 100%;
+  border: none;
+  outline: none;
+  background: transparent;
+  padding: 2px 2px;
+}
+
+.chat-input-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.bar-gap {
+  flex: 1;
+}
+
+.model-pick {
+  order: 1; /* right side, before the mic */
+  max-width: 220px;
+  height: 32px;
+  padding: 0 28px 0 12px;
+  border: 1px solid var(--frame);
+  border-radius: 9px;
+  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' fill='none' stroke='%23999' stroke-width='1.5'%3E%3Cpath d='M1 1l4 4 4-4'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: var(--text);
+  font: inherit;
+  font-size: 13px;
+  appearance: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.model-pick:hover,
+.model-pick:focus-visible {
+  border-color: var(--blue-dim);
+  outline: none;
+}
+
+.model-pick option,
+.model-pick optgroup {
+  background: var(--black);
+  color: var(--text);
+}
+
+.chat-input-bar .bar-gap {
+  order: 0;
+}
+
+.chat-input-bar .icon-btn {
+  order: 2;
+}
+
+.icon-btn.send-btn {
+  width: 34px;
+  height: 34px;
+  margin-left: 4px;
+  border-radius: 50%;
+  background: var(--text);
+  color: var(--black);
+}
+
+.icon-btn.send-btn:disabled {
+  background: var(--text-dim);
+  opacity: 0.45;
+}
+
+.icon-btn.send-btn:hover:not(:disabled) {
+  filter: none;
+  color: var(--black);
+}
+
+.icon-btn {
+  appearance: none;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+
+.icon-btn:hover:not(:disabled),
+.icon-btn[aria-pressed="true"] {
+  color: var(--text);
+  filter: drop-shadow(0 0 3px rgba(79, 182, 242, 0.7));
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
 }

@@ -2,7 +2,8 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import { useStore } from "./store.ts";
 import { engine } from "../audio/AudioEngine.ts";
 import { Segmented } from "./components/Controls.tsx";
-import { Screen } from "./components/Screen.tsx";
+import { Chip, Screen } from "./components/Screen.tsx";
+import { ChoirFaces } from "./components/ChoirFaces.tsx";
 import { ChatRight } from "./components/ChatPanel.tsx";
 import type { BodyName } from "../worklet/protocol.ts";
 import { bodyLabel, presetOf, PRESETS } from "./body.ts";
@@ -12,8 +13,6 @@ const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((
 
 function TopBar() {
   const started = useStore((s) => s.started);
-  const starting = useStore((s) => s.starting);
-  const start = useStore((s) => s.start);
   const body = useStore((s) => s.body);
   const setBody = useStore((s) => s.setBody);
   const volume = useStore((s) => s.volume);
@@ -46,14 +45,10 @@ function TopBar() {
           <span>Volume</span>
           <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ "--pos": `${volume * 100}%` } as React.CSSProperties} />
         </label>
-        {started ? (
+        {started && (
           <span className="load" title="Share of the audio thread's time budget used by the simulation">
             Engine load {Math.round(load * 100)} %
           </span>
-        ) : (
-          <button className="primary" onClick={() => void start()} disabled={starting}>
-            {starting ? "Starting…" : "Start audio"}
-          </button>
         )}
         <a className="repo-link" href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer" aria-label="Chimera source on GitHub" title="Chimera source on GitHub">
           <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
@@ -68,37 +63,46 @@ function TopBar() {
   );
 }
 
-function StartPrompt() {
-  const started = useStore((s) => s.started);
-  const starting = useStore((s) => s.starting);
-  const err = useStore((s) => s.startError);
-  const start = useStore((s) => s.start);
-  if (started) return null;
-  return (
-    <div className="start-prompt" data-layout="overlay">
-      <p>Every word here is produced by simulating air moving through a throat, mouth and nose.</p>
-      <button className="primary large" disabled={starting} onClick={() => void start()}>
-        {starting ? "Starting…" : "Start the voice"}
-      </button>
-      {err ? <p className="error">Audio could not start: {err}. Reload the page and try again.</p> : <p className="hint">Then type a message: the answer comes out loud.</p>}
-    </div>
-  );
-}
-
 /** The tall left screen: the 3D head facing the viewer, its airway live (pressure, airflow). */
 function LeftScreen() {
   const body = useStore((s) => s.body);
+  const xray = useStore((s) => s.view.xray);
+  const setView = useStore((s) => s.setView);
   return (
-    <Screen className="left" focus title="Vocal tract" sub={bodyLabel(body)} label="Live vocal tract">
-      <Suspense fallback={null}>
-        <AnatomyView3D readouts={false} />
-      </Suspense>
-      <StartPrompt />
+    <Screen
+      className="left"
+      focus
+      title="Vocal tract"
+      sub={bodyLabel(body)}
+      label="Live vocal tract"
+      tools={
+        <Chip on={xray} onClick={() => setView({ xray: !xray })} title="Show the tongue, jaw and airway through the face">
+          X-ray
+        </Chip>
+      }
+    >
+      <div className="head-stage">
+        <Suspense fallback={null}>
+          <AnatomyView3D readouts={false} />
+        </Suspense>
+      </div>
+      <ChoirFaces />
     </Screen>
   );
 }
 
 export function App() {
+  // browsers only allow audio after the visitor's first click or key: start it then, wherever it is
+  useEffect(() => {
+    const go = () => void useStore.getState().start();
+    const opts = { once: true, capture: true };
+    window.addEventListener("pointerdown", go, opts);
+    window.addEventListener("keydown", go, opts);
+    return () => {
+      window.removeEventListener("pointerdown", go, opts);
+      window.removeEventListener("keydown", go, opts);
+    };
+  }, []);
   return (
     <div className="app text-colors mode-chat">
       <TopBar />

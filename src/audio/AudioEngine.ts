@@ -19,7 +19,8 @@ export class AudioEngine {
   analyserFast: AnalyserNode | null = null;
   /** long time-domain window for the waveform scope */
   analyserScope: AnalyserNode | null = null;
-  private master: GainNode | null = null;
+  /** the volume: everything heard goes through it (the backing joins here) */
+  master: GainNode | null = null;
   /** "close mic" chain: proximity bass, presence, compression (beatboxers cup the mic) */
   private micIn: AudioNode | null = null;
   private micOn = false;
@@ -137,6 +138,45 @@ export class AudioEngine {
   onPlanned(l: (p: PlannedMessage) => void): () => void {
     this.plannedListeners.add(l);
     return () => this.plannedListeners.delete(l);
+  }
+
+  /** the extra singers (a found song's other sung parts), each its own engine on the same clock */
+  private choirNodes: { node: AudioWorkletNode; latest: TelemetryMessage | null }[] = [];
+
+  /**
+   * Sing plans on extra voices, one per plan, each with its own body; all sent in this one task, so
+   * they start on the same render quantum as a plan scheduled with them. Nodes are made on first use
+   * and kept (silent when idle).
+   */
+  singChoir(parts: { plan: { gestures: import("../wasm/types.ts").Gesture[]; segments: import("../wasm/types.ts").PlannedSegment[]; end: number }; body: BodyMix }[]): void {
+    const ctx = this.ctx;
+    if (!ctx || !this.master) return;
+    while (this.choirNodes.length < parts.length) {
+      const node = new AudioWorkletNode(ctx, "chimera", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { module: chimeraModule() } });
+      const gain = ctx.createGain();
+      gain.gain.value = 0.7; // the lead stays in front
+      node.connect(gain).connect(this.master);
+      const voice = { node, latest: null as TelemetryMessage | null };
+      node.port.onmessage = (e: MessageEvent<FromWorklet>) => {
+        if (e.data.type === "telemetry") voice.latest = e.data;
+        else if (e.data.type === "error") console.error("choir worklet:", e.data.message);
+      };
+      this.choirNodes.push(voice);
+    }
+    parts.forEach((p, i) => {
+      const port = this.choirNodes[i].node.port;
+      port.postMessage({ type: "body", body: p.body } satisfies ToWorklet);
+      port.postMessage({ type: "schedule", gestures: p.plan.gestures, segments: p.plan.segments, end: p.plan.end, id: ++this.speakId, replace: true } satisfies ToWorklet);
+    });
+  }
+
+  stopChoir(): void {
+    for (const c of this.choirNodes) c.node.port.postMessage({ type: "stopSpeech" } satisfies ToWorklet);
+  }
+
+  /** an extra singer's latest telemetry (its mouth), or null */
+  choirLatest(i: number): TelemetryMessage | null {
+    return this.choirNodes[i]?.latest ?? null;
   }
 
   /** Send a gestural plan (times relative to now). Returns the request id. */

@@ -13,6 +13,8 @@ export interface ViewOptions {
   calipers: boolean;
   /** the face screen shows the head in 3D (turn it with the pointer; no handles) */
   threeD: boolean;
+  /** the 3D head: the anatomy's lines show through the face */
+  xray: boolean;
 }
 
 interface State {
@@ -28,6 +30,8 @@ interface State {
   /** what the voice is feeling now (the face follows it) */
   mood: Mood;
   setMood: (m: Mood) => void;
+  /** waiting on the model's answer (the face looks thoughtful) */
+  thinking: boolean;
   start: () => Promise<void>;
   /** switch the voice to this body (rebuilds its airway) */
   setBody: (b: BodyMix) => void;
@@ -36,6 +40,10 @@ interface State {
   setVolume: (v: number) => void;
   setView: (v: Partial<ViewOptions>) => void;
 }
+
+/** the mouth at rest: lips together, jaw nearly closed (speaking opens it to NEUTRAL's) */
+export const MOUTH_SHUT = { jaw: 0.25, lipAp: -0.05 };
+export const MOUTH_OPEN = { jaw: NEUTRAL.jaw, lipAp: NEUTRAL.lipAp };
 
 let startPromise: Promise<void> | null = null;
 
@@ -47,13 +55,14 @@ export const useStore = create<State>((set, get) => ({
   source: { ...DEFAULT_SOURCE },
   artic: (() => {
     const tip = restTip(NEUTRAL.jaw, NEUTRAL.tbX, NEUTRAL.tbY);
-    return { ...NEUTRAL, ttX: tip.x, ttY: tip.y };
+    return { ...NEUTRAL, ttX: tip.x, ttY: tip.y, ...MOUTH_SHUT };
   })(),
   tipFree: true,
   volume: 0.8,
-  view: { pressure: true, particles: true, grid: false, calipers: false, threeD: true },
+  view: { pressure: true, particles: true, grid: false, calipers: false, threeD: true, xray: false },
   mood: "neutral",
   setMood: (m) => set({ mood: m }),
+  thinking: false,
   start: () => {
     if (get().started) return Promise.resolve();
     if (startPromise) return startPromise;

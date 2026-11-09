@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react";
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { Anatomy3D } from "../render/anatomy3d.ts";
+import { loadSkin } from "../render/skin3d.ts";
 import { Petting } from "../render/petting.ts";
 import { drawReadouts } from "../render/readouts.ts";
 import { Glow, label } from "../render/vector.ts";
@@ -77,6 +78,8 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
     const r = new Anatomy3D();
     r.centred = !readoutsRef.current;
     r.facing = feedRef.current?.facing ?? 1;
+    let gone = false;
+    loadSkin(gl).then((skin) => !gone && r.setSkin(skin), (err) => console.warn("face:", err));
     const glow = new Glow();
     const camera = r.camera;
     const controls = new OrbitControls(camera, canvas);
@@ -190,8 +193,10 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
         a = tele ? VoiceModel.articFromArray(tele.t.artic) : st.artic;
       }
       const view = feed ? feed.view : st.view;
+      r.xray = st.view.xray;
       r.face.content = pet.content;
       r.face.mood = MOOD[useStore.getState().mood].face;
+      r.face.thinking = useStore.getState().thinking;
       r.face.update(tele, elapsed);
       const m = feed ? feed.model : model.current;
       if (m && w > 0 && h > 0) {
@@ -242,12 +247,14 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
         crown = r.crown(m);
         pet.update(elapsed, [crown.x + r.facing * 7 * crown.cmPx, crown.y + 0.5 * crown.cmPx], crown.cmPx);
         pet.draw(ctx, r.facing, crown.cmPx);
-        glow.apply(canvas, ctx, dpr);
+        // the glow is the lines' halo: the face alone does without it (half the frame's cost)
+        if (r.linesShown) glow.apply(canvas, ctx, dpr);
       }
       raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
     return () => {
+      gone = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
       canvas.removeEventListener("dblclick", home);

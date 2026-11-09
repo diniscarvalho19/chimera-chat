@@ -27,6 +27,7 @@ import { Beams, Poly } from "./beams3d.ts";
 import { bodyPoint, buildProfile, Gaze, jawAngle, wallX } from "./profile.ts";
 import { faceHandles, type FaceView, type ViewFlags } from "./anatomy.ts";
 import { Expression } from "./expression.ts";
+import type { Skin } from "./skin3d.ts";
 
 type Table = readonly (readonly [number, number])[];
 type V3 = [number, number, number];
@@ -226,6 +227,8 @@ interface Rest {
   chin: Float32Array;
   eyes: V3[];
   eyeR: number;
+  /** where the lips meet (rest pose, body cm) */
+  mouthY: number;
 }
 
 /** how much of the jaw's rotation a point of the face's skin follows (rest pose, body cm) */
@@ -561,7 +564,7 @@ function buildRest(model: VoiceModel): Rest {
   // eyes: the 2D view draws one on the midline; here they sit either side of the nose
   const eyeC = B(6.15, 15.35);
   const center = new THREE.Vector3(0.3 * k, (head.y0 + head.y1) / 2, 0);
-  return { model, head, condyle, lipHalf, center, shell, fixed, jaw, chin, eyes: [[eyeC.x, eyeC.y, 3.15 * k], [eyeC.x, eyeC.y, -3.15 * k]], eyeR: 1.05 * k };
+  return { model, head, condyle, lipHalf, center, shell, fixed, jaw, chin, eyes: [[eyeC.x, eyeC.y, 3.15 * k], [eyeC.x, eyeC.y, -3.15 * k]], eyeR: 1.05 * k, mouthY: (frame.upperLip[6].y + frame.lowerLip[6].y) / 2 };
 }
 
 // ------------------------------------------------------------------ the renderer
@@ -599,6 +602,30 @@ export class Anatomy3D {
   facing: 1 | -1 = 1;
   private clock = 0;
   private readonly gaze = new Gaze();
+  /** the skinned face over the lines (set by the view once it loads); it takes the place of the
+   *  shell, the eyes and the lips' patch */
+  private skin: Skin | null = null;
+  private gazeAt = { pitch: 0, yaw: 0 };
+  /** with the face on: show the lines through it (off, just the face) */
+  xray = true;
+  /** lines are drawn (no face yet, or X-ray on): the view's glow pass is only for them */
+  get linesShown(): boolean {
+    return !this.skin || this.xray;
+  }
+  /** the face on the head: fitted to this body, and its shapes from the articulators and the expression */
+  private wearSkin(rest: Rest, a: HumanArtic): void {
+    if (!this.skin) return;
+    this.skin.tone(this.linesShown);
+    const [l, r] = rest.eyes;
+    this.v3.set((l[0] + r[0]) / 2, (l[1] + r[1]) / 2, (l[2] + r[2]) / 2);
+    this.skin.place(this.v3, Math.abs(l[2] - r[2]), rest.mouthY);
+    this.skin.drive(a, this.face, this.gazeAt.pitch, this.gazeAt.yaw);
+  }
+
+  setSkin(skin: Skin): void {
+    this.skin = skin;
+    this.beams.group.add(skin.root);
+  }
   /** brows, lids, cheeks and the head's nods, from the voice (the view updates it) */
   face = new Expression();
   /** the camera in the head's own frame (the head nods and sways under it) */
@@ -717,6 +744,15 @@ export class Anatomy3D {
     const k = model.tract.scale;
     const face = this.face;
     this.headPose(rest, k);
+    // the face alone (no X-ray): its gaze and shapes, and none of the lines it would hide
+    if (this.skin && !this.xray) {
+      this.eyes(rest, dt);
+      this.wearSkin(rest, a);
+      this.beams.begin();
+      this.beams.end(false);
+      this.caliper = null;
+      return;
+    }
     const phi = jawAngle(model, a.jaw);
     const C = rest.condyle;
     const B = this.beams;
@@ -758,7 +794,7 @@ export class Anatomy3D {
         B.poly(P, g.color, g.width, { alpha: g.alpha, hot: g.hot });
       }
     }
-    for (const sk of rest.shell) {
+    for (const sk of this.skin ? [] : rest.shell) {
       const P = this.tmp.reset();
       for (let i = 0; i < sk.w.length; i++) {
         const z = sk.a[3 * i + 2];
@@ -784,6 +820,7 @@ export class Anatomy3D {
     line(G.glottisWall, V.blue, 1.2, { alpha: 0.8 });
 
     this.eyes(rest, dt);
+    this.wearSkin(rest, a);
     this.airway(model, f, tele, view, k);
     this.velum(f, k);
     this.epiglottis(f, k, artCut);
@@ -792,7 +829,7 @@ export class Anatomy3D {
     const tongueOutline = flat(f.tongue);
     const soft = (v: Vec[], it: number) => flat(chaikin(v.map((p) => [p.x, p.y] as Pt), it).map(([x, y]) => ({ x, y })));
     const upperLip = soft(f.upperLip, 2), lowerLip = soft(f.lowerLip, 2);
-    const mouth = this.lips(rest, model, f, a, phi);
+    const mouth = this.skin ? null : this.lips(rest, model, f, a, phi);
     const chin = rest.chin;
     const chinNow = new Float32Array(chin.length);
     for (let i = 0; i < chin.length; i += 3) {
@@ -828,7 +865,7 @@ export class Anatomy3D {
     if (tele) this.drawTurbulence(model, f, tele);
     this.caliper = null;
     if (view.calipers) this.drawCaliper(f);
-    B.end();
+    B.end(!this.skin || this.xray);
   }
 
   private nearestEcho(t: number): Echo | null {
@@ -851,7 +888,7 @@ export class Anatomy3D {
   private headPose(rest: Rest, k: number): void {
     const g = this.beams.group;
     const pivot = this.v3.set(-2.4 * k, rest.head.y0 + 0.42 * (rest.condyle.y - rest.head.y0), 0);
-    this.turn.setFromEuler(this.euler.set(this.face.tilt, 0, this.face.nod));
+    this.turn.setFromEuler(this.euler.set(this.face.tilt, -this.face.turn, this.face.nod)); // −: a turn about y faces +z the other way
     g.quaternion.copy(this.turn);
     g.position.copy(pivot).sub(pivot.applyQuaternion(this.turn));
     g.updateMatrixWorld(true);
@@ -865,8 +902,13 @@ export class Anatomy3D {
     g.update(this.clock, dt);
     const r = rest.eyeR;
     // where they look: forward, turned by the gaze (yaw towards +z, pitch up)
-    const pitch = g.pitch + 1.3 * e.lookUp;
-    const d: V3 = [Math.cos(pitch) * Math.cos(g.yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(g.yaw)];
+    // thinking: the eyes take the thinking look's place (the head has turned part of the way: they make up the rest)
+    const pitch = (g.pitch + 1.3 * e.lookUp) * (1 - e.think) + e.think * (e.lookPitch - 0.3 * e.lookPitch);
+    const yaw = g.yaw * (1 - e.think) + e.think * (e.lookYaw - e.turn);
+    this.gazeAt.pitch = pitch;
+    this.gazeAt.yaw = yaw;
+    if (this.skin) return;
+    const d: V3 = [Math.cos(pitch) * Math.cos(yaw), Math.sin(pitch), Math.cos(pitch) * Math.sin(yaw)];
     const basis = (n: V3): [V3, V3] => {
       const up: V3 = Math.abs(n[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
       const u = norm3(cross(up, n));

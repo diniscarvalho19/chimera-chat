@@ -148,8 +148,12 @@ export class Beams {
     for (const b of this.batches) b.n = 0;
   }
 
-  end(): void {
-    for (const b of this.batches) b.commit();
+  /** `show` false hides the lines (the group's other children, such as the face, stay) */
+  end(show = true): void {
+    for (const b of this.batches) {
+      b.commit();
+      b.mesh.visible &&= show;
+    }
   }
 
   private batch(width: number): Batch {

@@ -1,11 +1,39 @@
 import { useEffect, useRef, useState } from "react";
-import { useStore } from "../store.ts";
+import { MOUTH_OPEN, MOUTH_SHUT, useStore } from "../store.ts";
 import { speakText, singSong, stopSpeaking, currentPlan, planNow } from "../speech.ts";
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
-import { extractSongs, moodBlocks, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
-import { MOOD, isMood, type Mood } from "../mood.ts";
+import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
+import { artistMentioned, findSong, songbook, songMentioned } from "../songbook.ts";
+import { harmonize } from "../song.ts";
+
+/** a message asking for backing singers */
+const HARMONY = /\b(harmon\w*|backing (vocals?|singers?|voices?)|back-?up (vocals?|singers?)|choir|chorus of|other voices|more voices|with voices)\b/i;
+
+/**
+ * A message, with a note for the model (not shown) on what the songbook has that it may sing: the
+ * song it names, or the songs of the artist it (or the message before it: "sing one of them")
+ * names; asked to sing something it hasn't got, to say so. So the model neither promises a song it
+ * can't sing nor makes one up, nor passes off another's song as the artist's. The notes say "if you
+ * sing": they don't ask for a song.
+ */
+async function withSongbook(message: string, before = ""): Promise<string> {
+  const index = await songbook().catch(() => []);
+  const artist = artistMentioned(index, message) ?? artistMentioned(index, before);
+  // a title inside the artist's name ("Imagine" in "Imagine Dragons") isn't the song asked for
+  const named = songMentioned(index, message);
+  const inName = (t: string) => artist && t.toLowerCase().split(/\W+/).filter(Boolean).every((w) => artist.artist.toLowerCase().includes(w));
+  const song = named && !inName(named.title) ? named : null;
+  const notes: string[] = [];
+  if (song) notes.push(`if you sing it, the songbook has "${song.title}"${song.artist ? ` by ${song.artist}` : ""}: use a song-ref block with exactly that title`);
+  if (artist)
+    notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"`).join(", ")}. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
+  if (!notes.length && /\bsing\b/i.test(message))
+    notes.push("the songbook has no score for any song named here. If an existing song was asked for, say plainly you don't have its music yet and offer to sing something else or a song of your own; never write its lyrics or a song block in its place");
+  return notes.length ? `${message}\n\n(Note from the app: ${notes.join("; ")}.)` : message;
+}import { MOOD, isMood, type Mood } from "../mood.ts";
 import { aiInstall, aiPrompt, aiStatus, type AIStatus } from "../chromeAI.ts";
+import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut, type OrModel } from "../openRouter.ts";
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -26,6 +54,30 @@ interface Speaking {
   /** the reply's songs not yet sung, in order (each shows as a ♪ paragraph) */
   songs: Song[];
 }
+
+/** Chrome's speech recognition (dictation), where there is one */
+interface Recognition {
+  lang: string;
+  interimResults: boolean;
+  onresult: (e: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void;
+  onend: () => void;
+  start(): void;
+  stop(): void;
+}
+const SpeechRec = ((globalThis as Record<string, unknown>).SpeechRecognition ?? (globalThis as Record<string, unknown>).webkitSpeechRecognition) as
+  | (new () => Recognition)
+  | undefined;
+
+const CHROME = "chrome";
+const SIGN_OUT = "sign-out";
+const MODEL_KEY = "chat-model";
+const stored = () => {
+  try {
+    return localStorage.getItem(MODEL_KEY);
+  } catch {
+    return null;
+  }
+};
 
 /** Chat mode's right column: talk to a model; each reply is said by the voice as it appears. */
 export function ChatRight() {
@@ -51,10 +103,59 @@ export function ChatRight() {
       // a download already under way (another tab, an earlier visit): follow it
       if (st === "downloading") install();
     });
+    orFinishSignIn().then(
+      (back) => {
+        setCloud(!!orKey());
+        if (back) setModel(OR_AUTO); // just signed in: chat through OpenRouter
+      },
+      (e: Error) => push({ role: "error", text: e.message, shown: Infinity }),
+    );
   }, []);
-  const ready = ai === "available";
+  // or OpenRouter (signed in): the model menu picks which, Chrome's by default
+  const [cloud, setCloud] = useState(() => !!orKey());
+  const [model, setModel] = useState(() => stored() ?? CHROME);
+  useEffect(() => {
+    try {
+      localStorage.setItem(MODEL_KEY, model); // kept across the sign-in's round trip
+    } catch {
+      // private window: the default next time
+    }
+  }, [model]);
+  const [orList, setOrList] = useState<OrModel[]>([]);
+  // the account's models, fetched again on each sign-in and out
+  useEffect(() => void orModels().then(setOrList, () => setOrList([])), [cloud]);
+  const local = model === CHROME;
+  const ready = local ? ai === "available" : cloud;
+  const pick = (v: string) => {
+    if (v === SIGN_OUT) {
+      orSignOut();
+      setCloud(false);
+      return setModel(CHROME);
+    }
+    if (v !== CHROME && !cloud) return void orSignIn(); // "Sign in…": off to OpenRouter
+    setModel(v);
+  };
+  // signed out (or the key was rejected): back on Chrome's
+  useEffect(() => {
+    if (!cloud && model !== CHROME) setModel(CHROME);
+  }, [cloud, model]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => useStore.setState({ thinking: busy }), [busy]);
+  const [rec, setRec] = useState<Recognition | null>(null);
+  /** dictate into the box (the voice stops first: the mic would hear it) */
+  const listen = () => {
+    if (rec) return rec.stop();
+    if (!SpeechRec) return;
+    stop();
+    const r = new SpeechRec();
+    r.lang = "en-US";
+    r.interimResults = true;
+    r.onresult = (e) => setInput(Array.from(e.results, (x) => x[0].transcript).join(""));
+    r.onend = () => setRec(null);
+    r.start();
+    setRec(r);
+  };
   const [rate, setRate] = useState(1.35);
   const [talking, setTalking] = useState(false);
   const sp = useRef<Speaking | null>(null);
@@ -79,6 +180,7 @@ export function ChatRight() {
 
   const finish = () => {
     feel("neutral");
+    useStore.getState().setArtic(MOUTH_SHUT);
     const s = sp.current;
     sp.current = null;
     setTalking(false);
@@ -99,6 +201,7 @@ export function ChatRight() {
         reveal(s.msg, b.start);
         const mood = isMood(b.mood) ? b.mood : "neutral";
         feel(mood);
+        useStore.getState().setArtic(MOUTH_OPEN);
         const v = MOOD[mood].voice, o = opts.current;
         const plan = song ? await singSong(song, o.body) : await speakText(text, { ipa: false, body: o.body, rate: o.rate * v.rate, f0: o.f0 * v.f0 });
         if (sp.current !== s) return; // stopped meanwhile
@@ -169,8 +272,20 @@ export function ChatRight() {
     push({ role: "user", text: message, shown: message.length });
     try {
       await start();
-      const reply = await aiPrompt(message);
-      const { display, songs } = extractSongs(reply.replace(/’/g, "'"));
+      const err = useStore.getState().startError;
+      if (err) throw new Error(`Audio could not start: ${err}`);
+      const prompt = await withSongbook(message, msgs.filter((m) => m.role === "user").at(-1)?.text);
+      const reply = local ? await aiPrompt(prompt) : await orPrompt(prompt, model);
+      const clean = reply.replace(/’/g, "'");
+      // songs asked for by name: their scores, from the songbook
+      const found = new Map(await Promise.all(songRefs(clean).map(async (q) => [q, (await findSong(q))?.song ?? null] as const)));
+      const { display, songs } = extractSongs(clean, found);
+      // asked for harmony: up to two backing singers on every song that has fewer of its own
+      if (HARMONY.test(message))
+        for (const song of songs) {
+          const own = song.voices?.length ?? 0;
+          if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
+        }
       const { text, blocks } = moodBlocks(display, isMood);
       const msg = push({ role: "assistant", text, shown: 0 });
       sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs };
@@ -179,16 +294,29 @@ export function ChatRight() {
     } catch (e) {
       push({ role: "error", text: String((e as Error).message ?? e), shown: Infinity });
     } finally {
+      setCloud(!!orKey());
       setBusy(false);
     }
   };
 
   return (
     <div className="right right-chat">
-      <Screen className="s-chat" title="Chat" sub="On-device AI" tools={<Slider label="Rate" value={rate} min={0.5} max={1.8} onChange={setRate} format={(v) => `${v.toFixed(2)}×`} />}>
+      <Screen className="s-chat" title="Chat" sub={local ? "On-device AI" : "OpenRouter"}
+        tools={<Slider label="Rate" value={rate} min={0.5} max={1.8} onChange={setRate} format={(v) => `${v.toFixed(2)}×`} />}
+      >
         <div className="chat">
           <div className="chat-log" ref={list} aria-live="polite">
-            {!ready && <AiSetup status={ai} progress={progress} onInstall={install} />}
+            {!ready && local && (
+              <AiSetup
+                status={ai}
+                progress={progress}
+                onInstall={install}
+                onSignIn={() => {
+                  setModel(OR_AUTO);
+                  void orSignIn();
+                }}
+              />
+            )}
             {ready && msgs.length === 0 && <p className="hint">Say something. The answer comes here, and out loud.</p>}
             {msgs.map((m, i) => (
               <div key={i} className={`chat-msg chat-${m.role}`}>
@@ -197,7 +325,7 @@ export function ChatRight() {
             ))}
             {busy && <div className="chat-msg chat-assistant chat-thinking">Thinking…</div>}
           </div>
-          <div className="say-row chat-input">
+          <div className="chat-input">
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
@@ -211,22 +339,41 @@ export function ChatRight() {
               rows={2}
               aria-label="Message"
               disabled={!ready}
-              placeholder={ready ? "Type a message (Enter to send, Shift+Enter for a new line)" : "Install the on-device model to chat"}
+              placeholder={ready ? "Ask anything (Enter to send, Shift+Enter for a new line)" : "Install the model or sign in to chat"}
             />
-            <div className="say-actions">
-              <button className="primary" onClick={() => void send()} disabled={busy || !ready || !input.trim()}>
-                {busy ? "Waiting…" : "Send"}
-              </button>
-              {talking && (
-                <>
-                  <button className="ghost" onClick={skip}>
-                    Skip
-                  </button>
-                  <button className="ghost" onClick={stop}>
-                    Stop
-                  </button>
-                </>
-              )}
+            <div className="chat-input-bar">
+              <select className="model-pick" value={model} onChange={(e) => pick(e.target.value)} aria-label="Model" title="Model">
+                <option value={CHROME}>Chrome AI (on-device)</option>
+                <optgroup label="OpenRouter">
+                  <option value={OR_AUTO}>{cloud ? "Auto (best available)" : "Sign in to choose a model…"}</option>
+                  {orList.filter((m) => m.free).map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                  {/* a model picked before the list loads, or gone from it, still shows */}
+                  {model !== CHROME && model !== OR_AUTO && !orList.some((m) => m.id === model) && <option value={model}>{model}</option>}
+                </optgroup>
+                {orList.some((m) => !m.free) && (
+                  <optgroup label="OpenRouter (paid, uses your credits)">
+                    {orList.filter((m) => !m.free).map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {cloud && <option value={SIGN_OUT}>Sign out of OpenRouter</option>}
+              </select>
+              <span className="bar-gap" />
+            {SpeechRec && <IconButton icon="mic" label={rec ? "Stop listening" : "Speak"} onClick={listen} disabled={!ready} pressed={!!rec} />}
+            {talking && (
+              <>
+                <IconButton icon="skip" label="Skip" onClick={skip} />
+                <IconButton icon="stop" label="Stop" onClick={stop} />
+              </>
+            )}
+            <IconButton className="send-btn" icon="send" label={busy ? "Waiting…" : "Send"} onClick={() => void send()} disabled={busy || !ready || !input.trim()} />
             </div>
           </div>
         </div>
@@ -236,7 +383,7 @@ export function ChatRight() {
 }
 
 /** Until the model is on this device: what's needed, the install button, the download's progress. */
-function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: number; onInstall: () => void }) {
+function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: number; onInstall: () => void; onSignIn: () => void }) {
   const { status, progress } = props;
   if (status === "checking") return <p className="hint">Checking for the on-device AI…</p>;
   if (status === "no-api" || status === "unavailable")
@@ -244,6 +391,10 @@ function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: nu
       <div className="ai-setup">
         <p>This chat runs an AI model on your own device, with Chrome&apos;s built-in AI.</p>
         <p className="hint">{status === "no-api" ? "Open it in Chrome 148 or newer on a computer." : "This device can't run Chrome's on-device model (it needs more memory, disk space or graphics power)."}</p>
+        <p>Or chat through OpenRouter: sign in (free, an account in a few taps) and it uses free models.</p>
+        <button className="primary" onClick={props.onSignIn}>
+          Sign in with OpenRouter
+        </button>
       </div>
     );
   if (status === "downloading")
@@ -262,5 +413,22 @@ function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: nu
         {status === "failed" ? "Try again" : "Install the model"}
       </button>
     </div>
+  );
+}
+
+const ICONS = {
+  send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
+  mic: "M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v3M8 21h8",
+  stop: "M6 6h12v12H6Z",
+  skip: "M5 5l10 7-10 7ZM18 5v14",
+};
+
+function IconButton(props: { icon: keyof typeof ICONS; label: string; onClick: () => void; disabled?: boolean; pressed?: boolean; className?: string }) {
+  return (
+    <button className={`icon-btn ${props.className ?? ""}`} onClick={props.onClick} disabled={props.disabled} aria-label={props.label} title={props.label} aria-pressed={props.pressed}>
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinejoin="round" strokeLinecap="round" aria-hidden="true">
+        <path d={ICONS[props.icon]} />
+      </svg>
+    </button>
   );
 }
