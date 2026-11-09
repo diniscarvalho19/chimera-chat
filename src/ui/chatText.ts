@@ -79,9 +79,9 @@ export function parseSong(src: string): Song {
   return { bpm, lines };
 }
 
-/** What the chat shows for a song: its lyrics, a ♪ per phrase */
+/** What the chat shows for a song: its lyrics as words (the syllable hyphens are for the notes), a ♪ per phrase */
 export function songDisplay(song: Song): string {
-  return song.lines.map((l) => `♪ ${l.lyrics}`).join("\n");
+  return song.lines.map((l) => `♪ ${l.lyrics.replace(/([a-z'])-(?=[a-z])/gi, "$1")}`).join("\n");
 }
 
 /** The reply as shown (each song block replaced by its lyrics, set apart as its own paragraph) and its songs, in order. */
