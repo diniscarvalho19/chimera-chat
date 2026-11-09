@@ -40,3 +40,20 @@ export const MOOD: Record<Mood, { voice: MoodVoice; face: MoodFace }> = {
 export function isMood(s: string): s is Mood {
   return (MOODS as readonly string[]).includes(s);
 }
+
+/** words a model tags with that aren't the moods' names, and the mood each is */
+const ALIASES: Record<string, Mood> = {
+  interested: "curious", intrigued: "curious", fascinated: "curious", wondering: "curious", thoughtful: "curious",
+  joyful: "happy", cheerful: "happy", glad: "happy", warm: "happy", playful: "happy", proud: "happy", amused: "happy", grateful: "happy",
+  thrilled: "excited", enthusiastic: "excited", eager: "excited", energetic: "excited",
+  amazed: "surprised", astonished: "surprised", shocked: "surprised",
+  worried: "concerned", anxious: "concerned", nervous: "concerned", apologetic: "concerned", serious: "concerned",
+  sorry: "sad", melancholy: "sad", wistful: "sad", disappointed: "sad",
+  relaxed: "calm", peaceful: "calm", gentle: "calm", reflective: "calm", soothing: "calm",
+};
+
+/** the mood a tag means: a mood's name, or a word close to one ("interested" is curious); else null */
+export function moodOf(s: string): Mood | null {
+  const w = s.toLowerCase();
+  return isMood(w) ? w : (ALIASES[w] ?? null);
+}

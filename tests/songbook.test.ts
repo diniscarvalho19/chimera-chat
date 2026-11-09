@@ -77,3 +77,18 @@ test("an artist named: their songs listed; another's song with a title they neve
   expect(findEntry(idx, "One By One")?.id).toBe("b");
   expect(findEntry(idx, "Amazing Grace - John Newton")?.id).toBe("d"); // a generic credit is anyone's
 });
+
+test("the songbook searched for the model: a topic, choir songs, the whole in brief", async () => {
+  const { searchSongs, choirSongs, songbookOverview, songName } = await import("../src/ui/songbook.ts");
+  const idx = [
+    { id: "a", title: "Last Christmas", artist: "Wham!" },
+    { id: "b", title: "Drink to me only", artist: "Anonymous", voices: 3 },
+    { id: "c", title: "White Christmas", artist: "Irving Berlin" },
+    { id: "d", title: "Amazing Grace", artist: "Misc Praise Songs", voices: 2 },
+  ];
+  expect(searchSongs(idx, "do you know any christmas songs?").map((e) => e.id)).toEqual(["a", "c"]);
+  expect(searchSongs(idx, "what songs do you have?")).toEqual([]); // asking about the songbook, not a topic
+  expect(choirSongs(idx).map((e) => e.id)).toEqual(["b", "d"]);
+  expect(songName(idx[3])).toBe('"Amazing Grace"'); // a generic credit isn't named
+  expect(songbookOverview(idx)).toStartWith("4 songs, 2 of them with choir parts.");
+});

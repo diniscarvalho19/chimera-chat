@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { blocks, extractSongs, moodBlocks, noteMidi, parseSong, toSpeech } from "../src/ui/chatText.ts";
-import { isMood } from "../src/ui/mood.ts";
+import { isMood, moodOf } from "../src/ui/mood.ts";
 
 test("paragraphs split on blank lines, never inside a code fence", () => {
   const t = "Hello there.\n\n```js\nconst a = 1;\n\nconst b = 2;\n```\n\nBye.";
@@ -29,10 +29,16 @@ test("a song block shows as its lyrics, in a paragraph of its own", () => {
   expect(blocks(display).length).toBe(3);
 });
 
-test("mood tags: stripped, one per paragraph, carried forward; a tag alone moves to the next paragraph; unknown tags stay", () => {
-  const { text, blocks: b } = moodBlocks("[happy] Yay!\n\nStill glad.\n\n[sad]\n\n♪ La la\n\n[angry] grr", isMood);
-  expect(text).toBe("Yay!\n\nStill glad.\n\n♪ La la\n\n[angry] grr");
-  expect(b.map((x) => [text.slice(x.start, x.end), x.mood])).toEqual([["Yay!", "happy"], ["Still glad.", "happy"], ["♪ La la", "sad"], ["[angry] grr", "sad"]]);
+test("mood tags: stripped, one per paragraph, carried forward; a tag alone moves to the next paragraph; other stage directions dropped", () => {
+  const { text, blocks: b } = moodBlocks("[happy] Yay!\n\nStill glad.\n\n[sad]\n\n♪ La la\n\n[angry] grr\n\nA [Link] stays.", isMood);
+  expect(text).toBe("Yay!\n\nStill glad.\n\n♪ La la\n\ngrr\n\nA [Link] stays.");
+  expect(b.map((x) => [text.slice(x.start, x.end), x.mood])).toEqual([["Yay!", "happy"], ["Still glad.", "happy"], ["♪ La la", "sad"], ["grr", "sad"], ["A [Link] stays.", "sad"]]);
+});
+
+test("a tag near a mood's name is that mood: [interested] is curious", () => {
+  const { text, blocks: b } = moodBlocks("Think about choirs. [interested] Queen layered theirs.", moodOf);
+  expect(text).toBe("Think about choirs. Queen layered theirs.");
+  expect(b.map((x) => x.mood)).toEqual(["neutral", "curious"]);
 });
 
 test("mood tags anywhere: a tag sets the mood of what follows; a trailing one is its paragraph's; closing tags dropped", () => {

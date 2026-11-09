@@ -191,7 +191,7 @@ export type MoodBlock = Block & { mood: string };
  * their moods: one per paragraph, split where a tag changes the mood inside it. Spans of one
  * paragraph are joined with a space, paragraphs with a blank line.
  */
-export function moodBlocks(text: string, known: (s: string) => boolean): { text: string; blocks: MoodBlock[] } {
+export function moodBlocks(text: string, known: (s: string) => boolean | string | null): { text: string; blocks: MoodBlock[] } {
   let out = "", mood = "neutral";
   const res: MoodBlock[] = [];
   const TAG = /\s*\[\/?([a-z]+)\]\s*/gi;
@@ -202,11 +202,13 @@ export function moodBlocks(text: string, known: (s: string) => boolean): { text:
     let at = 0, tag: string | null = null, opens = 0;
     if (!para.trimStart().startsWith("```"))
       for (const m of para.matchAll(TAG)) {
-        const name = m[1].toLowerCase();
-        if (!known(name)) continue;
+        const k = known(m[1].toLowerCase());
+        // a tag that isn't a mood but reads like a stage direction ("[laughs]") is dropped unsaid
+        if (!k && !/^\[\/?[a-z]+\]$/.test(m[0].trim())) continue;
+        const name = typeof k === "string" ? k : k ? m[1].toLowerCase() : null;
         pieces.push([tag, para.slice(at, m.index)]);
         at = m.index + m[0].length;
-        if (!m[0].includes("/")) {
+        if (name && !m[0].includes("/")) {
           tag = name;
           opens++;
         }

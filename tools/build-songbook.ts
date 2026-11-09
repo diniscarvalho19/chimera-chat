@@ -29,7 +29,7 @@ const english = new Set(dict.split("\n").map((l) => l.split(/\s/)[0].replace(/\(
 const out = new URL("../public/songs/", import.meta.url).pathname;
 mkdirSync(out, { recursive: true });
 const candidates: { mxl: string; song_name: string; title: string; artist_name: string; composer_name: string }[] = JSON.parse(readFileSync(candidatesPath, "utf8"));
-const index: { id: string; title: string; artist: string }[] = [];
+const index: { id: string; title: string; artist: string; voices?: number }[] = [];
 const seen = new Set<string>();
 const why = new Map<string, number>();
 const skip = (reason: string) => why.set(reason, (why.get(reason) ?? 0) + 1);
@@ -51,8 +51,10 @@ for (const c of candidates) {
     skip("not extracted");
     continue;
   }
+  let voices = 0;
   try {
     const song = scoreToSong(await scoreXml(bytes));
+    voices = song.voices?.length ?? 0;
     const words = song.lines.flatMap((l) => l.lyrics.toLowerCase().split(/\s+/)).filter((w) => w !== "~" && w);
     if (song.lines.length < 2) {
       skip("under two lines");
@@ -69,7 +71,8 @@ for (const c of candidates) {
   seen.add(key);
   const id = basename(c.mxl, ".mxl").slice(0, 16);
   copyFileSync(path, join(out, `${id}.mxl`));
-  index.push({ id, title, artist });
+  // voices: how many other sung parts it has (a choir's), for telling the model what it can sing
+  index.push({ id, title, artist, ...(voices ? { voices } : {}) });
 }
 writeFileSync(join(out, "index.json"), JSON.stringify(index));
 console.log(`${index.length} songs; skipped:`, Object.fromEntries(why));

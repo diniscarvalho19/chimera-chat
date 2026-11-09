@@ -10,6 +10,8 @@ export interface SongEntry {
   id: string;
   title: string;
   artist: string;
+  /** how many other sung parts it has (a choir's), sung with it by voices of their own */
+  voices?: number;
 }
 
 const words = (s: string): string[] =>
@@ -103,6 +105,32 @@ export function artistMentioned(index: SongEntry[], text: string): { artist: str
     by.set(key, g);
   }
   return [...by.entries()].sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
+}
+
+/** a song as the model is told of it: "Title" by Artist */
+export const songName = (e: SongEntry): string => `"${e.title}"${e.artist && !GENERIC.test(e.artist) ? ` by ${e.artist.split(/\s+arr\.?\s+/i)[0]}` : ""}`;
+
+/**
+ * Songs whose title or artist has a telling word of the message ("christmas", "love", "beatles"),
+ * most popular first: for "do you know any christmas songs?".
+ */
+export function searchSongs(index: SongEntry[], message: string, n = 15): SongEntry[] {
+  const q = new Set(words(message).filter((w) => w.length >= 4 && !COMMON.has(w) && !BROWSE.has(w)));
+  if (!q.size) return [];
+  return index.filter((e) => [...words(e.title), ...words(e.artist)].some((w) => q.has(w))).slice(0, n);
+}
+/** words of asking about the songbook itself, not a topic */
+const BROWSE = new Set("list songbook music musics artists artist bands band singers singer choir choirs harmony harmonies voices parts know have sing songs song".split(" "));
+
+/** songs with several singing parts (a choir's), most popular first */
+export const choirSongs = (index: SongEntry[], n = 20): SongEntry[] => index.filter((e) => (e.voices ?? 0) > 0).slice(0, n);
+
+/** the songbook in a few words: its size, its artists with the most songs, its best-known songs */
+export function songbookOverview(index: SongEntry[]): string {
+  const count = new Map<string, number>();
+  for (const e of index) if (e.artist && !GENERIC.test(e.artist)) count.set(e.artist.split(/\s+arr\.?\s+/i)[0], (count.get(e.artist.split(/\s+arr\.?\s+/i)[0]) ?? 0) + 1);
+  const artists = [...count].sort((a, b) => b[1] - a[1]).slice(0, 12).map(([a, k]) => `${a} (${k})`);
+  return `${index.length} songs, ${choirSongs(index, Infinity).length} of them with choir parts. Artists with the most: ${artists.join(", ")}. Some of the best known: ${index.slice(0, 15).map(songName).join(", ")}`;
 }
 
 let index: Promise<SongEntry[]> | null = null;

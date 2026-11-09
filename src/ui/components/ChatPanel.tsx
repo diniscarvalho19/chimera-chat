@@ -4,36 +4,48 @@ import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p } from "..
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
-import { artistMentioned, findSong, songbook, songMentioned } from "../songbook.ts";
+import { artistMentioned, choirSongs, findSong, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
 import { harmonize } from "../song.ts";
+import { MOOD, isMood, moodOf, type Mood } from "../mood.ts";
+import { aiInstall, aiPrompt, aiStatus, type AIStatus } from "../chromeAI.ts";
+import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut, type OrModel } from "../openRouter.ts";
 
 /** a message asking for backing singers */
 const HARMONY = /\b(harmon\w*|backing (vocals?|singers?|voices?)|back-?up (vocals?|singers?)|choir|chorus of|other voices|more voices|with voices)\b/i;
 
 /**
- * A message, with a note for the model (not shown) on what the songbook has that it may sing: the
- * song it names, or the songs of the artist it (or the message before it: "sing one of them")
- * names; asked to sing something it hasn't got, to say so. So the model neither promises a song it
- * can't sing nor makes one up, nor passes off another's song as the artist's. The notes say "if you
- * sing": they don't ask for a song.
+ * A message, with a note for the model (not shown) from its songbook: the song the message names,
+ * the songs of the artist it (or the message before it: "sing one of them") names, songs with choir
+ * parts when it asks about choirs or harmony, songs on its topic ("any christmas songs?"), or the
+ * songbook in brief when it asks what there is; asked to sing something not there, to say so. The
+ * model can't search; this is its search. The notes say "if you sing": they don't ask for a song.
  */
 async function withSongbook(message: string, before = ""): Promise<string> {
   const index = await songbook().catch(() => []);
+  if (!index.length) return message;
   const artist = artistMentioned(index, message) ?? artistMentioned(index, before);
   // a title inside the artist's name ("Imagine" in "Imagine Dragons") isn't the song asked for
   const named = songMentioned(index, message);
   const inName = (t: string) => artist && t.toLowerCase().split(/\W+/).filter(Boolean).every((w) => artist.artist.toLowerCase().includes(w));
   const song = named && !inName(named.title) ? named : null;
   const notes: string[] = [];
-  if (song) notes.push(`if you sing it, the songbook has "${song.title}"${song.artist ? ` by ${song.artist}` : ""}: use a song-ref block with exactly that title`);
+  if (song) notes.push(`if you sing it, the songbook has ${songName(song)}${song.voices ? ` (with ${song.voices} choir part${song.voices > 1 ? "s" : ""})` : ""}: use a song-ref block with exactly that title`);
   if (artist)
     notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"`).join(", ")}. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
+  if (CHOIR.test(message)) notes.push(`songs in the songbook sung with choir parts (other voices singing with you, each with a face): ${choirSongs(index).map(songName).join(", ")}`);
+  const topic = song || artist ? [] : searchSongs(index, message);
+  if (topic.length) notes.push(`songs in the songbook on that: ${topic.map(songName).join(", ")}`);
+  if (!notes.length && ABOUT_SONGBOOK.test(message)) notes.push(`your songbook (what you can sing from real scores): ${songbookOverview(index)}`);
   if (!notes.length && /\bsing\b/i.test(message))
     notes.push("the songbook has no score for any song named here. If an existing song was asked for, say plainly you don't have its music yet and offer to sing something else or a song of your own; never write its lyrics or a song block in its place");
-  return notes.length ? `${message}\n\n(Note from the app: ${notes.join("; ")}.)` : message;
-}import { MOOD, isMood, type Mood } from "../mood.ts";
-import { aiInstall, aiPrompt, aiStatus, type AIStatus } from "../chromeAI.ts";
-import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut, type OrModel } from "../openRouter.ts";
+  return notes.length ? `${message}\n\n(Note from the app, your songbook's own answer: ${notes.join("; ")}. Answer from this; to sing one, use a song-ref block with its exact title.)` : message;
+}
+
+/** asking about choirs, harmony, several voices */
+const CHOIR = /\b(choirs?|harmon\w*|a ?cappella|vocal (groups?|harmon\w*)|multi-?(part|voice|layered)|layered vocals?|several voices|other voices|more voices|backing (vocals?|singers?)|duets?|quartets?)\b/i;
+/** asking what the songbook has */
+const ABOUT_SONGBOOK = /\b(songbook|what (songs|music) (do you|can you)|which songs|what can you sing|list (of )?(songs|artists|music)|(any|some) songs|songs (do|can) you|what artists|which artists)\b/i;
+
 
 interface Msg {
   role: "user" | "assistant" | "error";
@@ -307,7 +319,7 @@ export function ChatRight() {
           const own = song.voices?.length ?? 0;
           if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
         }
-      const { text, blocks } = moodBlocks(display, isMood);
+      const { text, blocks } = moodBlocks(display, moodOf);
       const msg = push({ role: "assistant", text, shown: 0 });
       sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs };
       setTalking(true);
