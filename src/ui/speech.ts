@@ -179,7 +179,16 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
   const sp = playPlan(plan, words.filter((w) => w.text !== "~"), song.lines.map((l) => l.lyrics).join(" | "));
   // the worklets time their plans from when they get them: the other singers and the band start
   // on the same instant (sent in this same task)
-  const choirParts: ChoirPart[] = voices.map((v) => ({ name: v.name, words: v.words.filter((w) => w.text !== "~") }));
+  // a held note ("~": a melisma or a tie) lengthens its word, so the face doesn't read it as a rest
+  const held = (ws: WordSpan[]) => {
+    const out: WordSpan[] = [];
+    for (const w of ws) {
+      if (w.text !== "~") out.push({ ...w });
+      else if (out.length) out[out.length - 1].t1 = w.t1;
+    }
+    return out;
+  };
+  const choirParts: ChoirPart[] = voices.map((v) => ({ name: v.name, words: held(v.words) }));
   const nodes: Parameters<typeof engine.singChoir>[0] = voices.map((v) => ({ plan: v.plan, body: v.body }));
   if (beatSung) {
     const at = Math.min(beatAt, nodes.length);

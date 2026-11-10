@@ -140,9 +140,10 @@ export class Choir {
         if (now < x.t1 + HOLD) word = x.text;
         break;
       }
-      // a resting part fades in about 200 ms, and settles: mouth shut, head bowed, eyes down
+      // a resting part fades in about 200 ms, and settles: mouth shut, head bowed, eyes closed
       head.alpha += ((word ? 1 : REST) - head.alpha) * Math.min(1, dt / 0.07);
       const r = (head.rest += ((word ? 0 : 1) - head.rest) * Math.min(1, dt / 0.15));
+      head.face.lid = Math.max(head.face.lid, r); // eyes shut while it rests
       if (head.artic) {
         const a = head.artic;
         head.skin.drive({ ...a, jaw: a.jaw + (MOUTH_SHUT.jaw - a.jaw) * r, lipAp: a.lipAp + (MOUTH_SHUT.lipAp - a.lipAp) * r }, head.face, -0.35 * r, 0);
@@ -174,7 +175,7 @@ export class Choir {
       if ("letterSpacing" in ctx) (ctx as CanvasRenderingContext2D & { letterSpacing: string }).letterSpacing = "0px";
       ctx.font = WORD_FONT;
       ctx.fillStyle = word ? INK : FAINT;
-      ctx.fillText(word || "rests", x + W / 2, top + H + 25 + 15 * lines.length, NAME_W);
+      if (word) ctx.fillText(word, x + W / 2, top + H + 25 + 15 * lines.length, NAME_W);
       ctx.restore();
     });
   }
