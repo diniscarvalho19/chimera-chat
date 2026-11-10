@@ -43,15 +43,3 @@ export function Toggle(props: { label: string; checked: boolean; onChange: (v: b
     </label>
   );
 }
-
-export function Segmented<T extends string>(props: { value: T | null; options: { value: T; label: string }[]; onChange: (v: T) => void; label: string }) {
-  return (
-    <div className="segmented" role="radiogroup" aria-label={props.label}>
-      {props.options.map((o) => (
-        <button key={o.value} role="radio" aria-checked={props.value === o.value} className={props.value === o.value ? "on" : ""} onClick={() => props.onChange(o.value)}>
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}

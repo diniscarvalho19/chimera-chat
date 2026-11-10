@@ -5,6 +5,7 @@ import { NEUTRAL, restTip, type HumanArtic } from "../wasm/engine.ts";
 import { defaultF0, PRESETS, sameBody, type BodyMix } from "./body.ts";
 import { stopSpeaking } from "./speech.ts";
 import type { Mood } from "./mood.ts";
+import { changedVoice, DEFAULT_VOICE, type VoiceChange, type VoiceSettings } from "./chatText.ts";
 
 export interface ViewOptions {
   pressure: boolean;
@@ -27,6 +28,10 @@ interface State {
   tipFree: boolean;
   volume: number;
   view: ViewOptions;
+  /** the voice the model has set (the default: the man, as he is) */
+  voice: VoiceSettings;
+  /** a voice tag's change: the body (rebuilds the airway, if it changes) and the voice */
+  changeVoice: (c: VoiceChange) => void;
   /** what the voice is feeling now (the face follows it) */
   mood: Mood;
   setMood: (m: Mood) => void;
@@ -60,6 +65,12 @@ export const useStore = create<State>((set, get) => ({
   tipFree: true,
   volume: 0.8,
   view: { pressure: true, particles: true, grid: false, calipers: false, threeD: true, xray: false },
+  voice: DEFAULT_VOICE,
+  changeVoice: (c) => {
+    const { body, voice } = changedVoice(get(), c);
+    if (!sameBody(body, get().body)) get().setBody(body);
+    set({ voice });
+  },
   mood: "neutral",
   setMood: (m) => set({ mood: m }),
   thinking: false,

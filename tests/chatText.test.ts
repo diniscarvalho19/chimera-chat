@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { blocks, extractSongs, moodBlocks, noteMidi, parseSong, toSpeech } from "../src/ui/chatText.ts";
+import { blocks, extractSongs, moodBlocks, noteMidi, parseSong, parseVoice, toSpeech } from "../src/ui/chatText.ts";
 import { isMood, moodOf } from "../src/ui/mood.ts";
 
 test("paragraphs split on blank lines, never inside a code fence", () => {
@@ -77,4 +77,16 @@ test("a song the model offered unasked that isn't there is left out quietly; a w
   const reply = "One is this:\n```song-ref\nLisboa Café\n```\n<center>excerpt</center>\nLovely.";
   expect(extractSongs(reply, new Map(), true).display).toBe("One is this:\n\nLovely.");
   expect(extractSongs(reply).display).toBe("One is this:\n\nI couldn't find the music for Lisboa Café.\n\nLovely.");
+});
+
+test("voice tags: settings in range, body words, said nowhere; each on the words after it, a lone one on the next paragraph's", () => {
+  expect(parseVoice(" female=0.7 pitch=3 rate:0.9 breathiness=-1 wobble=2")).toEqual({ female: 0.7, pitch: 2, rate: 0.9, breathiness: 0 });
+  expect(parseVoice(" child")).toEqual({ child: 1 });
+  expect(parseVoice(" default pitch=1.2")).toEqual({ reset: true, pitch: 1.2 });
+  const { text, blocks: b, voiceAfter } = moodBlocks("[happy] Hi. [voice child=1 pitch=1.2] I'm small now!\n\n[voice default]\n\n[sad] Back. [voice female]", isMood);
+  expect(text).toBe("Hi. I'm small now!\n\nBack.");
+  expect(b.map((x) => [x.mood, x.voice])).toEqual([["happy", undefined], ["happy", { child: 1, pitch: 1.2 }], ["sad", { reset: true }]]);
+  expect(voiceAfter).toEqual({ female: 1, child: 0 });
+  // another bracket with settings isn't ours: it stays
+  expect(moodBlocks("See [x=1] here.", isMood).text).toBe("See [x=1] here.");
 });

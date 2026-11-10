@@ -1,19 +1,15 @@
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useStore } from "./store.ts";
 import { engine } from "../audio/AudioEngine.ts";
-import { Segmented } from "./components/Controls.tsx";
 import { Chip, Screen } from "./components/Screen.tsx";
 import { ChatRight } from "./components/ChatPanel.tsx";
-import type { BodyName } from "../worklet/protocol.ts";
-import { bodyLabel, presetOf, PRESETS } from "./body.ts";
+import { bodyLabel } from "./body.ts";
 
 // three.js loads after the engine, with the head
 const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((m) => ({ default: m.AnatomyView3D })));
 
 function TopBar() {
   const started = useStore((s) => s.started);
-  const body = useStore((s) => s.body);
-  const setBody = useStore((s) => s.setBody);
   const volume = useStore((s) => s.volume);
   const setVolume = useStore((s) => s.setVolume);
   const [load, setLoad] = useState(0);
@@ -26,18 +22,6 @@ function TopBar() {
       <div className="brand">
         <span className="wordmark">Chimera</span>
         <span className="tagline">A voice grown from a simulated airway</span>
-      </div>
-      <div className="body-control">
-        <Segmented<BodyName>
-          label="Body"
-          value={presetOf(body)}
-          onChange={(b) => setBody(PRESETS[b])}
-          options={[
-            { value: "male", label: "Male" },
-            { value: "female", label: "Female" },
-            { value: "child", label: "Child" },
-          ]}
-        />
       </div>
       <div className="topbar-right">
         <label className="volume">

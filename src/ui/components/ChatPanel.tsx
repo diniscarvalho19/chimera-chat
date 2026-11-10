@@ -4,7 +4,9 @@ import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p, zh } from
 import { hasHan } from "../../wasm/engine.ts";
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
-import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
+import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song, type VoiceChange } from "../chatText.ts";
+import { defaultF0 } from "../body.ts";
+import { DEFAULT_SOURCE } from "../../wasm/engine.ts";
 import { artistMentioned, choirSongs, findSong, languageSongs, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
 import { acappella, ensemble, harmonize } from "../song.ts";
 
@@ -77,6 +79,8 @@ interface Speaking {
   lower: string;
   /** the reply's songs not yet sung, in order (each shows as a ♪ paragraph) */
   songs: Song[];
+  /** a voice tag at the reply's very end: the voice from the next reply on */
+  voiceAfter?: VoiceChange;
 }
 
 /** Chrome's speech recognition (dictation), where there is one */
@@ -105,8 +109,6 @@ const stored = () => {
 
 /** Chat mode's right column: talk to a model; each reply is said by the voice as it appears. */
 export function ChatRight() {
-  const body = useStore((s) => s.body);
-  const f0 = useStore((s) => s.source.f0);
   const start = useStore((s) => s.start);
   const setSource = useStore((s) => s.setSource);
   const setMood = useStore((s) => s.setMood);
@@ -195,8 +197,8 @@ export function ChatRight() {
   const [rate, setRate] = useState(1.35);
   const [talking, setTalking] = useState(false);
   const sp = useRef<Speaking | null>(null);
-  const opts = useRef({ body, f0, rate });
-  opts.current = { body, f0, rate };
+  const opts = useRef({ rate });
+  opts.current = { rate };
   const list = useRef<HTMLDivElement>(null);
   const count = useRef(0);
   /** append a message; its index */
@@ -207,14 +209,21 @@ export function ChatRight() {
 
   const reveal = (msg: number, shown: number) => setMsgs((m) => m.map((x, i) => (i === msg && shown > x.shown ? { ...x, shown } : x)));
 
-  /** the voice and the face take on a mood */
+  /** the voice and the face take on a mood; the voice quality the model fixed stays (else the mood's) */
   const feel = (m: Mood) => {
-    const { breathiness, tension, brightness } = MOOD[m].voice;
-    setSource({ breathiness, tension, brightness });
+    const mv = MOOD[m].voice, v = useStore.getState().voice;
+    setSource({
+      breathiness: v.breathiness ?? mv.breathiness,
+      tension: v.tension ?? mv.tension,
+      brightness: v.brightness ?? mv.brightness,
+      roughness: v.roughness ?? DEFAULT_SOURCE.roughness,
+      fry: v.fry ?? DEFAULT_SOURCE.fry,
+    });
     setMood(m);
   };
 
   const finish = () => {
+    if (sp.current?.voiceAfter) useStore.getState().changeVoice(sp.current.voiceAfter);
     feel("neutral");
     useStore.getState().setArtic(MOUTH_SHUT);
     const s = sp.current;
@@ -230,6 +239,8 @@ export function ChatRight() {
     if (!s) return;
     while (++s.bi < s.blocks.length) {
       const b = s.blocks[s.bi];
+      // the model's voice tag: the voice from these words on (a new body is a new airway)
+      if (b.voice) useStore.getState().changeVoice(b.voice);
       const para = s.lower.slice(b.start, b.end);
       const song = para.startsWith("♪") ? s.songs.shift() : undefined;
       const text = toSpeech(para);
@@ -238,8 +249,9 @@ export function ChatRight() {
         const mood = isMood(b.mood) ? b.mood : "neutral";
         feel(mood);
         useStore.getState().setArtic(MOUTH_OPEN);
-        const v = MOOD[mood].voice, o = opts.current;
-        const plan = song ? await singSong(song, o.body) : await speakText(text, { ipa: false, body: o.body, rate: o.rate * v.rate, f0: o.f0 * v.f0 });
+        // pitch and pace: the body's own, times the model's voice, times the mood's
+        const v = MOOD[mood].voice, { body, voice } = useStore.getState(), rate = opts.current.rate;
+        const plan = song ? await singSong(song, body) : await speakText(text, { ipa: false, body, rate: rate * voice.rate * v.rate, f0: defaultF0(body) * voice.pitch * v.f0 });
         if (sp.current !== s) return; // stopped meanwhile
         if (plan) {
           Object.assign(s, { planId: plan.id, matched: 0, cursor: b.start });
@@ -344,9 +356,9 @@ export function ChatRight() {
       if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song, false, !!song.drums || /\bbeat ?box/i.test(message))));
       // asked for the most voices: every line doubled at the octave
       if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
-      const { text, blocks } = moodBlocks(display, moodOf);
+      const { text, blocks, voiceAfter } = moodBlocks(display, moodOf);
       const msg = push({ role: "assistant", text, shown: 0 });
-      sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs };
+      sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs, voiceAfter };
       setTalking(true);
       void next();
     } catch (e) {

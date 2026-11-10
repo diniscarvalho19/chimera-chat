@@ -217,47 +217,119 @@ export function extractSongs(text: string, found: ReadonlyMap<string, Song | nul
 // at a paragraph's end (nothing after it) is that paragraph's if it had none; a tag alone carries
 // to the next paragraph; closing tags "[/happy]" are dropped
 
-export type MoodBlock = Block & { mood: string };
+export type MoodBlock = Block & { mood: string; voice?: VoiceChange };
 
 /**
- * Strip the mood tags (only the known ones: `known`), giving the text to show and its spans with
- * their moods: one per paragraph, split where a tag changes the mood inside it. Spans of one
- * paragraph are joined with a space, paragraphs with a blank line.
+ * A change of voice the model asks for with a tag, "[voice female=0.7 pitch=1.2 breathiness=0.4]":
+ * its body (female 0…1, child 0…1; male is both 0), its pitch and pace (multipliers of the body's
+ * own) and its voice quality (0…1). Only what's given changes; "[voice female]", "[voice child]",
+ * "[voice male]" set the body; "[voice default]" is the default (the man, as he is).
  */
-export function moodBlocks(text: string, known: (s: string) => boolean | string | null): { text: string; blocks: MoodBlock[] } {
+export interface VoiceChange {
+  female?: number;
+  child?: number;
+  pitch?: number;
+  rate?: number;
+  breathiness?: number;
+  roughness?: number;
+  fry?: number;
+  tension?: number;
+  brightness?: number;
+  /** back to the default voice first */
+  reset?: boolean;
+}
+const VOICE_RANGE: Record<Exclude<keyof VoiceChange, "reset">, [number, number]> = {
+  female: [0, 1], child: [0, 1], pitch: [0.5, 2], rate: [0.5, 2],
+  breathiness: [0, 1], roughness: [0, 1], fry: [0, 1], tension: [0, 1], brightness: [0, 1],
+};
+const VOICE_WORDS: Record<string, VoiceChange> = {
+  male: { female: 0, child: 0 }, man: { female: 0, child: 0 },
+  female: { female: 1, child: 0 }, woman: { female: 1, child: 0 },
+  child: { child: 1 }, kid: { child: 1 },
+  default: { reset: true }, normal: { reset: true }, reset: { reset: true },
+};
+/** the voice the model has set beside its body: pitch and pace as multipliers, and any voice quality it fixed (else each mood's) */
+export type VoiceSettings = { pitch: number; rate: number } & Pick<VoiceChange, "breathiness" | "roughness" | "fry" | "tension" | "brightness">;
+export const DEFAULT_VOICE: VoiceSettings = { pitch: 1, rate: 1 };
+type Body = { female: number; child: number };
+
+/** a voice tag's change applied: only what it names changes ("default" first resets to the man, as he is) */
+export function changedVoice(now: { body: Body; voice: VoiceSettings }, c: VoiceChange): { body: Body; voice: VoiceSettings } {
+  const { reset, female, child, ...rest } = c;
+  const base = reset ? { body: { female: 0, child: 0 }, voice: DEFAULT_VOICE } : now;
+  return { body: { female: female ?? base.body.female, child: child ?? base.body.child }, voice: { ...base.voice, ...rest } };
+}
+
+/** a voice tag's settings ("female=0.7 pitch=1.2", "child"): what it names, in range; unknown names left out */
+export function parseVoice(attrs: string): VoiceChange {
+  const v: VoiceChange = {};
+  for (const [, k, n] of attrs.toLowerCase().matchAll(/([a-z]+)(?:\s*[=:]\s*(-?[\d.]+))?/g)) {
+    if (n === undefined) Object.assign(v, VOICE_WORDS[k] ?? {});
+    else if (k in VOICE_RANGE && Number.isFinite(Number(n))) {
+      const [lo, hi] = VOICE_RANGE[k as keyof typeof VOICE_RANGE];
+      v[k as keyof typeof VOICE_RANGE] = Math.min(hi, Math.max(lo, Number(n)));
+    }
+  }
+  return v;
+}
+
+/**
+ * Strip the mood tags (only the known ones: `known`) and voice tags, giving the text to show and
+ * its spans with their moods: one per paragraph, split where a tag changes the mood (or the voice)
+ * inside it. A voice tag's change goes on the span after it; one with nothing after it is
+ * `voiceAfter`. Spans of one paragraph are joined with a space, paragraphs with a blank line.
+ */
+export function moodBlocks(text: string, known: (s: string) => boolean | string | null): { text: string; blocks: MoodBlock[]; voiceAfter?: VoiceChange } {
   let out = "", mood = "neutral";
   const res: MoodBlock[] = [];
-  const TAG = /\s*\[\/?([a-z]+)\]\s*/gi;
+  const TAG = /\s*\[\/?([a-z]+)((?:[\s,]+[a-z]+(?:\s*[=:]\s*-?[\d.]+)?)*)\s*\]\s*/gi;
+  // a voice change waiting for the next words
+  let pending: VoiceChange | null = null;
   for (const b of blocks(text)) {
     const para = text.slice(b.start, b.end).replace(/\n+$/, "");
-    // [mood or null for "no tag before it", text] pieces
-    const pieces: [string | null, string][] = [];
-    let at = 0, tag: string | null = null, opens = 0;
+    // [mood or null for "no tag before it", text, voice change before it] pieces
+    const pieces: [string | null, string, VoiceChange | null][] = [];
+    let at = 0, tag: string | null = null, opens = 0, v: VoiceChange | null = null;
     if (!para.trimStart().startsWith("```"))
       for (const m of para.matchAll(TAG)) {
+        if (m[1].toLowerCase() === "voice") {
+          pieces.push([tag, para.slice(at, m.index), v]);
+          at = m.index + m[0].length;
+          v = parseVoice(m[2]);
+          continue;
+        }
+        if (m[2].trim()) continue; // another tag with settings: not ours, left as it is
         const k = known(m[1].toLowerCase());
         // a tag that isn't a mood but reads like a stage direction ("[laughs]") is dropped unsaid
         if (!k && !/^\[\/?[a-z]+\]$/.test(m[0].trim())) continue;
         const name = typeof k === "string" ? k : k ? m[1].toLowerCase() : null;
-        pieces.push([tag, para.slice(at, m.index)]);
+        pieces.push([tag, para.slice(at, m.index), v]);
+        v = null;
         at = m.index + m[0].length;
         if (name && !m[0].includes("/")) {
           tag = name;
           opens++;
         }
       }
-    pieces.push([tag, para.slice(at)]);
-    const spans = pieces.filter(([, t]) => t.trim());
+    pieces.push([tag, para.slice(at), v]);
+    // each voice change goes on the next span with words (it may be the next paragraph's)
+    const spans: [string | null, string, VoiceChange | null][] = [];
+    for (const [t, w, change] of pieces) {
+      if (change) pending = { ...(change.reset ? {} : pending), ...change };
+      if (!w.trim()) continue;
+      spans.push([t, w, pending]);
+      pending = null;
+    }
     // the paragraph's one tag, at its end ("Done! [happy]"): the paragraph's mood
     if (opens === 1 && spans.length === 1 && spans[0][0] === null && pieces.length === 2) spans[0][0] = tag;
     if (!spans.length && tag) mood = tag;
-    spans.forEach(([t, words], i) => {
+    spans.forEach(([t, words, voice], i) => {
       if (t) mood = t;
       if (out) out += i ? " " : "\n\n";
       const w = i ? words.trim() : words.trimEnd();
-      res.push({ start: out.length, end: out.length + w.length, mood });
+      res.push({ start: out.length, end: out.length + w.length, mood, ...(voice ? { voice } : {}) });
       out += w;
     });
   }
-  return { text: out, blocks: res };
+  return { text: out, blocks: res, ...(pending ? { voiceAfter: pending } : {}) };
 }
