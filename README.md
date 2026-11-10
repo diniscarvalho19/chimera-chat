@@ -31,10 +31,9 @@ CHIMERA (play, speak, sing, beatbox, bestiary, duet, CLI, docs, research tools) 
   Asked a cappella, voices take the band's parts: a bass, a backing and middle voice, and a
   beatboxer. The app searches the songbook for what you ask and tells the model what it has.
   `src/ui/songbook.ts`, `src/ui/musicxml.ts`, `src/ui/backing.ts`, `tools/build-songbook.ts`.
-- **Languages.** Besides English, it speaks and sings Korean, Mandarin (characters or pinyin) and
-  Brazilian Portuguese (upstream PR #34 and
-  [hugoriosbrito/chimera-pt-br](https://github.com/hugoriosbrito/chimera-pt-br)), and sings
-  Italian.
+- **Languages.** Besides English, it speaks and sings Brazilian Portuguese (from
+  [@hugoriosbrito](https://github.com/hugoriosbrito)'s fork,
+  [chimera-pt-br](https://github.com/hugoriosbrito/chimera-pt-br)), and sings Italian.
 
 ## Run it
 
