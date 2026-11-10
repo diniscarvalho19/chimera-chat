@@ -1011,184 +1011,423 @@ input[type="range"]::-moz-range-thumb {
 }
 
 /* =====================================================================================
-   Modern layer: the same black-and-blue vector display, with rounded glass panels, a soft
-   glow, and body text in Archivo (Hershey's single stroke stays for titles and labels).
+   Libretto: the conversation reads like a printed score. Warm ink on a black stage, a book
+   serif for what is said, small caps for who says it, no bubbles. The head keeps its blue.
    ===================================================================================== */
 
-:root {
-  --panel-bg: radial-gradient(120% 90% at 50% 0%, rgba(79, 182, 242, 0.07), transparent 60%), #02060a;
-  --panel-edge: rgba(79, 182, 242, 0.5);
-  --read: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
 }
 
-body {
-  background: radial-gradient(80% 60% at 30% 0%, rgba(79, 182, 242, 0.06), transparent 70%), #000;
+@font-face {
+  font-family: "Newsreader";
+  src: url("/fonts/newsreader-italic-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  --stage: #0e0d0b;
+  --ink: #ece5d5;
+  --ink-dim: #b0a792;
+  --ink-faint: #8f8672;
+  --rule: #2b2720;
+  --edge: #5f5747; /* control borders: 3:1 on the stage */
+  --cue: #d4ab62;
+  --read: "Newsreader", Georgia, "Times New Roman", serif;
+  --ui: "Archivo", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+.text-colors {
+  background: var(--stage);
+  color: var(--ink);
+  --text: var(--ink);
+  --text-dim: var(--ink-dim);
+  --frame: var(--rule);
+  --caliper: var(--cue);
+}
+
+.app {
+  padding: 0;
+  gap: 0;
+}
+
+.topbar {
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--rule);
 }
 
 .wordmark {
-  font-size: 20px;
+  font-family: var(--read);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+  text-transform: none;
+  text-shadow: none;
 }
 
-.tagline,
+.tagline {
+  font-family: var(--read);
+  font-style: italic;
+  font-size: 16px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink-dim);
+}
+
 .load {
-  font-size: 11px;
-  color: rgba(226, 245, 252, 0.72);
+  font-family: var(--ui);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-transform: none;
+  color: var(--ink-faint);
 }
 
-/* the head gets the larger share; the chat stays a readable column */
+.repo-link {
+  color: var(--ink-dim);
+}
+
+.repo-link:hover {
+  color: var(--ink);
+  filter: none;
+}
+
+/* the head gets the larger share; the chat stays a reading column */
 .wall {
-  grid-template-columns: minmax(0, 1.25fr) minmax(360px, 1fr);
-  gap: 14px;
+  grid-template-columns: minmax(0, 1.3fr) minmax(380px, 1fr);
+  gap: 0;
+  min-height: 0;
 }
 
 .screen {
-  border: 1px solid var(--panel-edge);
-  border-radius: 6px;
-  background: var(--panel-bg);
-  box-shadow: inset 0 1px 0 rgba(239, 251, 255, 0.04), 0 0 24px rgba(79, 182, 242, 0.04);
-  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: var(--stage);
+  box-shadow: none;
 }
 
-.screen.focus {
-  border-color: var(--panel-edge);
-}
-
-.screen-head {
-  padding: 12px 16px 0;
-  align-items: center;
-}
-
-.screen-title {
-  font-size: 13px;
-}
-
-.screen-sub {
-  font-size: 11px;
-  color: rgba(226, 245, 252, 0.72);
-}
-
-/* the head's canvas is opaque black (its glow adds light onto black): its panel matches */
+/* the head's canvas is opaque black: its panel matches */
 .screen.left {
   background: #000;
 }
 
-.screen-tools .chip,
+.s-chat {
+  border-left: 1px solid var(--rule);
+}
+
+.screen-head {
+  padding: 18px 36px 0;
+  align-items: baseline;
+}
+
+.screen-title,
+.screen-sub {
+  font-family: var(--ui);
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  text-shadow: none;
+}
+
+.screen-title {
+  color: var(--ink-dim);
+}
+
+.screen-sub {
+  color: var(--ink-faint);
+}
+
+.left .screen-head {
+  padding: 16px 20px 0;
+}
+
 .chip,
+.screen-tools .chip,
 button.primary,
 button.ghost {
-  border-radius: 4px;
-  font-size: 11px;
-  padding: 5px 12px;
+  font-family: var(--ui);
+  font-weight: 500;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  text-transform: none;
+  text-shadow: none;
+  box-shadow: none;
+  min-height: 36px;
+  padding: 0 16px;
+  font-stretch: normal;
+  border: 1px solid var(--edge);
+  border-radius: 999px;
+  color: var(--ink);
+  background: transparent;
 }
 
 .screen-tools .chip {
-  border-color: var(--panel-edge);
+  background: rgba(14, 13, 11, 0.6);
   backdrop-filter: blur(6px);
 }
 
-/* chat */
+.chip:hover,
+button.ghost:hover {
+  border-color: var(--ink-faint);
+}
+
+.chip.on,
+.chip[aria-pressed="true"] {
+  border-color: var(--ink);
+  box-shadow: none;
+  text-shadow: none;
+}
+
+button.primary {
+  background: var(--ink);
+  color: var(--stage);
+  border-color: var(--ink);
+  min-height: 44px;
+  padding: 0 22px;
+}
+
+/* the log: who speaks in small caps over what is said, in a book serif */
 
 .chat {
-  padding: 10px 16px 16px;
-  gap: 12px;
+  padding: 8px 36px 28px;
+  gap: 16px;
 }
 
 .chat-log {
-  gap: 12px;
-  padding-right: 4px;
+  gap: 28px;
+  padding: 12px 4px 8px 0;
   scrollbar-width: thin;
-  scrollbar-color: var(--blue-dim) transparent;
+  scrollbar-color: var(--rule) transparent;
 }
 
 .chat-msg {
   font-family: var(--read);
-  font-size: 15px;
+  text-wrap: pretty;
+  letter-spacing: normal;
+  font-variant-numeric: normal;
+  font-size: 19px;
   line-height: 1.55;
-  letter-spacing: 0.005em;
-  padding: 10px 14px;
-  border: 1px solid var(--panel-edge);
-  border-radius: 6px;
-  max-width: 85%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  max-width: 34em;
+}
+
+.chat-msg::before {
+  display: block;
+  margin-bottom: 4px;
+  font-family: var(--ui);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
 }
 
 .chat-user {
+  align-self: stretch;
   opacity: 1;
-  background: rgba(79, 182, 242, 0.12);
-  border-color: rgba(79, 182, 242, 0.65);
-  border-bottom-right-radius: 2px;
+  font-size: 17px;
+  color: var(--ink-dim);
+}
+
+.chat-user::before {
+  content: "You";
 }
 
 .chat-assistant {
-  background: rgba(239, 251, 255, 0.03);
-  border-bottom-left-radius: 2px;
+  align-self: stretch;
+}
+
+.chat-assistant::before {
+  content: "Chimera";
+  color: var(--cue);
+}
+
+/* "Thinking…" is a stage direction */
+.chat-thinking {
+  font-style: italic;
+  color: var(--ink-dim);
+  opacity: 1;
+  animation-name: chat-cue;
+}
+
+.chat-thinking::before {
+  content: none;
 }
 
 .chat-error {
-  border-color: var(--red);
-  background: rgba(255, 93, 64, 0.08);
+  align-self: stretch;
+  color: #ff8f73;
+  font-size: 17px;
+}
+
+.chat-error::before {
+  content: "Interrupted";
+  color: #ff8f73;
 }
 
 .hint {
   margin: 0;
   font-family: var(--read);
-  font-size: 14px;
-  letter-spacing: 0.01em;
-  color: rgba(226, 245, 252, 0.7);
+  letter-spacing: normal;
+  font-style: italic;
+  font-size: 16px;
+  color: var(--ink-dim);
 }
 
 .ai-setup {
   font-family: var(--read);
-  border-color: var(--panel-edge);
-  border-radius: 6px;
-  background: rgba(239, 251, 255, 0.03);
+  letter-spacing: normal;
+  text-wrap: pretty;
+  font-size: 18px;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  background: none;
 }
 
+.ai-progress {
+  height: 2px;
+  border: 0;
+  background: var(--rule);
+}
+
+.ai-progress::-webkit-progress-bar {
+  background: var(--rule);
+}
+
+/* separate rules: one unknown vendor pseudo-element drops the whole rule */
+.ai-progress::-webkit-progress-value {
+  background: var(--cue);
+  box-shadow: none;
+}
+
+.ai-progress::-moz-progress-bar {
+  background: var(--cue);
+}
+
+/* the message box: a ruled line to write on, the controls under it */
+
 .chat-input {
-  border-color: var(--panel-edge);
-  border-radius: 6px;
-  background: rgba(239, 251, 255, 0.025);
-  transition: border-color 120ms, box-shadow 120ms;
+  padding: 14px 0 0;
+  border: 0;
+  border-top: 1px solid var(--edge);
+  border-radius: 0;
+  background: none;
+  gap: 10px;
 }
 
 .chat-input:focus-within {
-  border-color: rgba(79, 182, 242, 0.85);
-  box-shadow: 0 0 0 3px rgba(79, 182, 242, 0.1), 0 0 18px rgba(79, 182, 242, 0.12);
+  border-color: var(--ink);
+  box-shadow: none;
 }
 
 .chat-input textarea {
   font-family: var(--read);
-  font-size: 15px;
-  letter-spacing: 0.005em;
-  color: var(--text);
+  letter-spacing: normal;
+  font-size: 19px;
+  line-height: 1.45;
+  height: 58px;
+  color: var(--ink);
+  padding: 0;
 }
 
 .chat-input textarea::placeholder {
-  color: rgba(226, 245, 252, 0.45);
+  font-style: italic;
+  color: var(--ink-faint);
 }
 
 .model-pick {
-  font-family: var(--read);
-  border-color: var(--panel-edge);
-  border-radius: 4px;
+  font-family: var(--ui);
+  font-size: 13px;
+  height: 40px;
+  padding: 0 32px 0 14px;
+  letter-spacing: normal;
+  border: 1px solid var(--edge);
+  border-radius: 20px;
+  color: var(--ink);
+}
+
+.model-pick:hover,
+.model-pick:focus-visible {
+  border-color: var(--ink-faint);
+}
+
+.model-pick option,
+.model-pick optgroup {
+  background: var(--stage);
+}
+
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--ink-dim);
+}
+
+.icon-btn:hover:not(:disabled),
+.icon-btn[aria-pressed="true"] {
+  color: var(--ink);
+  filter: none;
+}
+
+.icon-btn[aria-pressed="true"],
+.icon-btn[aria-pressed="true"]:hover:not(:disabled) {
+  color: var(--cue);
 }
 
 .icon-btn.send-btn {
-  background: var(--blue);
-  box-shadow: 0 0 12px rgba(79, 182, 242, 0.45);
+  width: 44px;
+  height: 44px;
+  background: var(--ink);
+  color: var(--stage);
+  box-shadow: none;
+}
+
+.icon-btn.send-btn:hover:not(:disabled) {
+  color: var(--stage);
+  background: #fff8e8;
 }
 
 .icon-btn.send-btn:disabled {
   /* an outlined arrow when there's nothing to send: visible, plainly not ready */
   background: transparent;
-  border: 1px solid var(--panel-edge);
-  color: rgba(226, 245, 252, 0.6);
-  box-shadow: none;
+  border: 1px solid var(--edge);
+  color: var(--ink-faint);
   opacity: 1;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cue);
+  outline-offset: 3px;
+}
+
+.model-pick:focus-visible {
+  outline: 2px solid var(--cue);
+}
+
+@keyframes chat-cue {
+  50% { opacity: 0.7; }
 }
 
 @media (max-width: 1100px) {
   .wall {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .s-chat {
+    border-left: 0;
+    border-top: 1px solid var(--rule);
   }
 
   /* stacked: the head takes about half the window, so the chat starts on screen */
@@ -1198,32 +1437,54 @@ button.ghost {
 }
 
 @media (max-width: 640px) {
-  .wall-chat {
-    border: none;
-    gap: 8px;
-  }
-
-  .wall-chat .screen {
-    border: 1px solid var(--panel-edge);
-  }
-
-  .chat-msg {
-    font-size: 15px;
-  }
-
-  /* the top bar stays one row: the wordmark and the repo link */
   .topbar {
     flex-wrap: nowrap;
-    min-height: 32px;
+    min-height: 0;
+    padding: 10px 16px;
   }
 
-  .wordmark {
-    font-size: 16px;
-    letter-spacing: 0.24em;
-  }
-
+  .tagline,
   .load {
     display: none;
   }
 
+  .wordmark {
+    font-size: 20px;
+  }
+
+  .wall-chat {
+    border: 0;
+  }
+
+  .s-chat {
+    border-top: 0;
+  }
+
+  .chat {
+    padding: 4px 16px 12px;
+  }
+
+  .chat-log {
+    gap: 20px;
+  }
+
+  .chat-msg,
+  .chat-input textarea {
+    font-size: 17px;
+  }
+
+  .chat-user {
+    font-size: 16px;
+  }
+}
+
+/* read by screen readers, not drawn */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

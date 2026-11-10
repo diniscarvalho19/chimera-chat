@@ -75,6 +75,7 @@ interface Speaking {
   planId: number;
   matched: number;
   cursor: number;
+  text: string;
   lower: string;
   /** the reply's songs not yet sung, in order (each shows as a ♪ paragraph) */
   songs: Song[];
@@ -194,6 +195,8 @@ export function ChatRight() {
     setRec(r);
   };
   const [talking, setTalking] = useState(false);
+  /** the last paragraph said in full: what a screen reader reads, once (the log grows word by word) */
+  const [heard, setHeard] = useState("");
   const sp = useRef<Speaking | null>(null);
   const list = useRef<HTMLDivElement>(null);
   const count = useRef(0);
@@ -233,7 +236,9 @@ export function ChatRight() {
   const next = async () => {
     const s = sp.current;
     if (!s) return;
-    while (++s.bi < s.blocks.length) {
+    for (;;) {
+      if (s.bi >= 0) setHeard(s.text.slice(s.blocks[s.bi].start, s.blocks[s.bi].end).trim());
+      if (++s.bi >= s.blocks.length) break;
       const b = s.blocks[s.bi];
       // the model's voice tag: the voice from these words on (a new body is a new airway)
       if (b.voice) useStore.getState().changeVoice(b.voice);
@@ -354,11 +359,13 @@ export function ChatRight() {
       if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
       const { text, blocks, voiceAfter } = moodBlocks(display, moodOf);
       const msg = push({ role: "assistant", text, shown: 0 });
-      sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs, voiceAfter };
+      sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, text, lower: text.toLowerCase(), songs, voiceAfter };
       setTalking(true);
       void next();
     } catch (e) {
-      push({ role: "error", text: String((e as Error).message ?? e), shown: Infinity });
+      const err = String((e as Error).message ?? e);
+      push({ role: "error", text: err, shown: Infinity });
+      setHeard(err);
     } finally {
       setCloud(!!orKey());
       setBusy(false);
@@ -370,7 +377,7 @@ export function ChatRight() {
     <div className="right right-chat">
       <Screen className="s-chat" title="Chat" sub={local ? "On-device AI" : "OpenRouter"}>
         <div className="chat">
-          <div className="chat-log" ref={list} aria-live="polite">
+          <div className="chat-log" ref={list}>
             {!ready && local && (
               <AiSetup
                 status={ai}
@@ -382,6 +389,7 @@ export function ChatRight() {
                 }}
               />
             )}
+            {ready && !msgs.length && !busy && <p className="hint">Chimera waits. Ask it anything, or ask it to sing a song by name.</p>}
             {msgs.map((m, i) => (
               <div key={i} className={`chat-msg chat-${m.role}`}>
                 {m.text.slice(0, m.shown)}
@@ -393,6 +401,9 @@ export function ChatRight() {
               </div>
             )}
           </div>
+          <p className="sr-only" aria-live="polite">
+            {heard}
+          </p>
           <div className="chat-input">
             <textarea
               value={input}
