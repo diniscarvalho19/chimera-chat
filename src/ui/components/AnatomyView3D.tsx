@@ -41,6 +41,9 @@ export interface HeadFeed {
   facing?: 1 | -1;
 }
 
+/** the face's arrival out of the dark, s */
+const ARRIVE = 0.7;
+
 const ease = (t: number) => (t < 0.5 ? 4 * t * t * t : 1 - (-2 * t + 2) ** 3 / 2);
 
 export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showFormants?: boolean; overlay?: OverlayFn; feed?: HeadFeed; readouts?: boolean }) {
@@ -80,7 +83,23 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
     r.centred = !readoutsRef.current;
     r.facing = feedRef.current?.facing ?? 1;
     let gone = false;
-    loadSkin(gl).then((skin) => !gone && r.setSkin(skin), (err) => console.warn("face:", err));
+    // nothing is drawn until the face is on (no lines from the side, then a turn); then the face
+    // comes out of the dark
+    let dressed = false;
+    /** 0 → 1 over the arrival: the face's fade from black */
+    let arrive = 0;
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    loadSkin(gl).then(
+      (skin) => {
+        if (gone) return;
+        r.setSkin(skin);
+        dressed = true;
+      },
+      (err) => {
+        console.warn("face:", err);
+        dressed = true; // the lines alone, then
+      },
+    );
     const glow = new Glow();
     /** a found song's other singers, under the head */
     const choir = new Choir();
@@ -95,9 +114,10 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
     controls.maxDistance = 220;
 
     // camera moves (the opening turn from the side view, double-click home): orbit round the target
-    const tween = { on: false, t: 0, dur: 1, p0: new THREE.Vector3(), q0: new THREE.Vector3(), p1: new THREE.Vector3(), q1: new THREE.Vector3() };
+    const tween = { on: false, t: 0, dur: 1, out: false, p0: new THREE.Vector3(), q0: new THREE.Vector3(), p1: new THREE.Vector3(), q1: new THREE.Vector3() };
     const s0 = new THREE.Spherical(), s1 = new THREE.Spherical(), off = new THREE.Vector3();
-    const moveTo = (pos: THREE.Vector3, target: THREE.Vector3, dur: number) => {
+    const moveTo = (pos: THREE.Vector3, target: THREE.Vector3, dur: number, out = false) => {
+      tween.out = out; // decelerating only (an arrival), else in and out
       tween.p0.copy(camera.position);
       tween.q0.copy(controls.target);
       tween.p1.copy(pos);
@@ -109,7 +129,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
     const stepTween = (dt: number) => {
       if (!tween.on) return;
       tween.t = Math.min(1, tween.t + dt / tween.dur);
-      const e = ease(tween.t);
+      const e = tween.out ? 1 - (1 - tween.t) ** 4 : ease(tween.t);
       s0.setFromVector3(off.copy(tween.p0).sub(tween.q0));
       s1.setFromVector3(off.copy(tween.p1).sub(tween.q1));
       let dth = s1.theta - s0.theta;
@@ -202,14 +222,18 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
       r.face.thinking = useStore.getState().thinking;
       r.face.update(tele, elapsed);
       const m = feed ? feed.model : model.current;
-      if (m && w > 0 && h > 0) {
+      if (m && w > 0 && h > 0 && dressed) {
         if (posed !== m) {
           const p = r.poses(m);
           if (!posed) {
-            // open on the 2D view's side view, then turn to show the face
-            camera.position.copy(p.side);
+            // out of the void: from three times as far, already facing, to home (reduced motion: there)
             controls.target.copy(p.target);
-            moveTo(p.home, p.target, 1.6);
+            camera.position.copy(p.home);
+            if (!reduced) {
+              camera.position.sub(p.target).multiplyScalar(3).add(p.target);
+              controls.maxDistance = Infinity; // the far start isn't clamped
+              moveTo(p.home, p.target, ARRIVE, true);
+            }
           } else {
             // another body: keep the view, centred on the new head
             off.copy(p.target).sub(posedTarget);
@@ -224,6 +248,7 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
         }
         refit = false;
         stepTween(dt);
+        if (arrive < 1 && (arrive = Math.min(1, arrive + elapsed / ARRIVE)) === 1) controls.maxDistance = 220;
         controls.update(dt);
         const f = m.frame(a);
         const readouts = readoutsRef.current;
@@ -234,7 +259,9 @@ export function AnatomyView3D(props: { slots?: SlotsFn; info?: InfoFn; showForma
         ctx.globalCompositeOperation = "source-over";
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1 - (1 - arrive) ** 3;
         ctx.drawImage(glCanvas, 0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1;
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         if (r.caliper) {
           const [cx, cy] = r.project(r.caliper.x, r.caliper.y, r.caliper.z);

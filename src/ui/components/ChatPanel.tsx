@@ -293,9 +293,11 @@ export function ChatRight() {
     return () => cancelAnimationFrame(raf);
   }, []);
 
+  /** the log follows the words while it's at the bottom; scrolled up to read back, it stays put */
+  const follow = useRef(true);
   useEffect(() => {
-    list.current?.scrollTo({ top: list.current.scrollHeight });
-  }, [msgs]);
+    if (follow.current) list.current?.scrollTo({ top: list.current.scrollHeight });
+  }, [msgs, busy]);
 
   // leaving the panel (another mode) ends the reply
   useEffect(() => () => void (sp.current = null), []);
@@ -318,6 +320,7 @@ export function ChatRight() {
     stop();
     setInput("");
     setBusy(true);
+    follow.current = true; // a new message: back to the bottom
     push({ role: "user", text: message, shown: message.length });
     try {
       if (!useStore.getState().started) setStatus("Waking up the voice…");
@@ -377,7 +380,14 @@ export function ChatRight() {
     <div className="right right-chat">
       <Screen className="s-chat" title="Chat" sub={local ? "On-device AI" : "OpenRouter"}>
         <div className="chat">
-          <div className="chat-log" ref={list}>
+          <div
+            className="chat-log"
+            ref={list}
+            onScroll={(e) => {
+              const el = e.currentTarget;
+              follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+            }}
+          >
             {!ready && local && (
               <AiSetup
                 status={ai}
@@ -496,7 +506,7 @@ function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: nu
 }
 
 /** the speaking rate, over the mood's and the voice tag's */
-const RATE = 1.35;
+const RATE = 1.1;
 
 const ICONS = {
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
