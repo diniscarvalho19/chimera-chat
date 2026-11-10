@@ -17,9 +17,32 @@ export interface ChordSpan {
 const LEVEL = 0.5; // about 3 dB over the first 0.35, which sat too far under the voice
 
 let bus: GainNode | null = null;
+
+/**
+ * The band's notes are made a little ahead of when they sound, not all at the start: a long score
+ * (a 3-minute piano part is over a thousand notes, six nodes each) built at once stalled the audio
+ * thread, and the song began in silence.
+ */
+const AHEAD = 2; // s
+let pending: { t: number; play: () => void }[] = [];
+let pump: ReturnType<typeof setInterval> | undefined;
+/** play the queued notes as their time comes near */
+function roll(): void {
+  pending.sort((a, b) => a.t - b.t);
+  let i = 0;
+  const step = () => {
+    const until = (engine.ctx?.currentTime ?? Infinity) + AHEAD;
+    while (i < pending.length && pending[i].t < until) pending[i++].play();
+    if (i >= pending.length) clearInterval(pump);
+  };
+  step();
+  pump = setInterval(step, 250);
+}
 let noise: AudioBuffer | null = null;
 
 export function stopBacking(): void {
+  clearInterval(pump);
+  pending = [];
   if (!bus || !engine.ctx) return;
   const b = bus;
   bus = null;
@@ -95,16 +118,22 @@ export function playBacking(chords: ChordSpan[], start: number, beat: number): v
       if (t < now) continue;
       const onBeat = k % 2 === 0;
       const b = Math.floor(k / 2);
-      // strum: down on the beat (low to high), a lighter up-strum on the "and"
-      const order = onBeat ? voicing : [...voicing].reverse();
-      order.forEach((m, i) => tone("sawtooth", hz(m), t + i * 0.012, beat * 0.9, (onBeat ? 0.09 : 0.05) * (b % 2 ? 1.15 : 1), 1600));
-      if (onBeat) {
-        tone("triangle", hz(bass), t, beat * 0.85, 0.35, 900);
-        if (b % 2 === 0) kick(t);
-      }
-      hat(t, onBeat ? 0.12 : 0.07);
+      pending.push({
+        t,
+        play: () => {
+          // strum: down on the beat (low to high), a lighter up-strum on the "and"
+          const order = onBeat ? voicing : [...voicing].reverse();
+          order.forEach((m, i) => tone("sawtooth", hz(m), t + i * 0.012, beat * 0.9, (onBeat ? 0.09 : 0.05) * (b % 2 ? 1.15 : 1), 1600));
+          if (onBeat) {
+            tone("triangle", hz(bass), t, beat * 0.85, 0.35, 900);
+            if (b % 2 === 0) kick(t);
+          }
+          hat(t, onBeat ? 0.12 : 0.07);
+        },
+      });
     }
   }
+  roll();
 }
 
 /**
@@ -127,7 +156,13 @@ export function playParts(notes: PartNote[], start: number, beat: number): void 
   notes.forEach((n, i) => {
     const t = start + n.t * beat, len = Math.max(0.08, n.beats * beat);
     if (t < now) return;
-    const peak = 0.5 / Math.sqrt(Math.max(1, dense[i]));
+    pending.push({ t, play: () => note(n, t, len, 0.5 / Math.sqrt(Math.max(1, dense[i]))) });
+  });
+  roll();
+
+  /** one of the parts' notes: an "ooh" for a sung part, a pluck for an instrument */
+  function note(n: PartNote, t: number, len: number, peak: number) {
+    if (!ctx) return; // (narrowed above; a hoisted function doesn't see it)
     const g = ctx.createGain();
     const lp = ctx.createBiquadFilter();
     g.connect(out);
@@ -161,5 +196,5 @@ export function playParts(notes: PartNote[], start: number, beat: number): void 
       o.start(t);
       o.stop(t + len + 0.2);
     }
-  });
+  }
 }

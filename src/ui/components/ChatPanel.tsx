@@ -7,7 +7,7 @@ import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song
 import { defaultF0 } from "../body.ts";
 import { DEFAULT_SOURCE } from "../../wasm/engine.ts";
 import { artistMentioned, choirSongs, findSong, languageSongs, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
-import { acappella, ensemble, harmonize } from "../song.ts";
+import { acappella, ensemble } from "../song.ts";
 
 /** a message asking for a song without instruments (however it's spelt) */
 const A_CAPPELLA = /\b(a[\s-]?cap+el+a|acap+el+a|no (instruments|band|music)|voices only|just voices|only voices)\b/i;
@@ -17,9 +17,6 @@ import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut
 
 /** a message asking for as many singers as there can be */
 const MAX_VOICES = /\b((max(imum)?|most|all( the)?|lots of|many|more and more|full|big|huge)\s+(number of\s+)?(voices|singers|choir|cast|ensemble)|ensemble|full cast|whole cast)\b/i;
-/** a message asking for backing singers */
-const HARMONY = /\b(harmon\w*|backing (vocals?|singers?|voices?)|back-?up (vocals?|singers?)|choir|chorus of|other voices|more voices|with voices)\b/i;
-
 /**
  * A message, with a note for the model (not shown) from its songbook: the song the message names,
  * the songs of the artist it (or the message before it: "sing one of them") names, songs with choir
@@ -347,17 +344,9 @@ export function ChatRight() {
       // a song the model offered unasked that isn't there is left out, not apologised for
       const { display, songs } = extractSongs(clean, found, !/\b(sing|sang|play)\b/i.test(message));
       const cappella = A_CAPPELLA.test(message);
-      // asked for harmony: a score's instrument parts sung over its band; otherwise up to two
-      // backing singers on every song that has fewer of its own
-      if (HARMONY.test(message))
-        songs.forEach((song, i) => {
-          if (!cappella && song.parts?.some((p) => !p.vocal)) return void (songs[i] = acappella(song, true));
-          const own = song.voices?.length ?? 0;
-          if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
-        });
-      // asked a cappella: no band; voices sing its instruments' parts
-      // a beatboxer where the score had drums, or when asked for
-      if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song, false, !!song.drums || /\bbeat ?box/i.test(message))));
+      // asked a cappella: no band, only the song's own singers; a beatboxer where the score had
+      // drums, or when asked for
+      if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song, !!song.drums || /\bbeat ?box/i.test(message))));
       // asked for the most voices: every line doubled at the octave
       if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
       const { text, blocks, voiceAfter } = moodBlocks(display, moodOf);
