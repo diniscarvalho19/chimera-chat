@@ -107,6 +107,25 @@ export class Choir {
     return this.heads.length > 0;
   }
 
+  private fade: HTMLCanvasElement | null = null;
+  /** the head's picture with the main head's falloff: its edges, chin and neck go see-through
+   *  (painting them black showed a box over the main head's glow) */
+  private faded(src: HTMLCanvasElement, dpr: number): HTMLCanvasElement {
+    const c = (this.fade ??= document.createElement("canvas"));
+    const w = Math.round(W * dpr), h = Math.round(H * dpr);
+    if (c.width !== w || c.height !== h) Object.assign(c, { width: w, height: h });
+    const g = c.getContext("2d")!;
+    g.globalCompositeOperation = "copy";
+    g.drawImage(src, 0, 0, w, h);
+    g.globalCompositeOperation = "destination-in";
+    const fall = g.createRadialGradient(w / 2, h * 0.42, h * 0.22, w / 2, h * 0.42, h * 0.62);
+    fall.addColorStop(0, "rgba(0,0,0,0.8)");
+    fall.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = fall;
+    g.fillRect(0, 0, w, h);
+    return c;
+  }
+
   /** Draw the singers (if a song with them is playing) along the bottom of a w×h (CSS px) canvas. */
   draw(ctx: CanvasRenderingContext2D, w: number, h: number, dpr: number, dt: number): void {
     const choir = currentChoir();
@@ -152,13 +171,7 @@ export class Choir {
       gl.render(head.scene, this.camera);
       ctx.save();
       ctx.globalAlpha = head.alpha;
-      ctx.drawImage(gl.domElement, x, top, W, H);
-      // the main head's falloff: the edges, chin and neck sink into the dark
-      const fall = ctx.createRadialGradient(x + W / 2, top + H * 0.42, H * 0.22, x + W / 2, top + H * 0.42, H * 0.62);
-      fall.addColorStop(0, "rgba(0,0,0,0.2)");
-      fall.addColorStop(1, "#000");
-      ctx.fillStyle = fall;
-      ctx.fillRect(x, top, W, H);
+      ctx.drawImage(this.faded(gl.domElement, dpr), x, top, W, H);
       ctx.textAlign = "center";
       ctx.textBaseline = "alphabetic";
       ctx.font = NAME_FONT;
