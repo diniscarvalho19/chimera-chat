@@ -69,6 +69,10 @@ test("a cappella: no band; a bass and a backing voice sing the instruments' lowe
   ]);
   const a = acappella(tune);
   expect(a.parts).toEqual([]);
+  // a beatboxer only where the score had drums (or one is asked for)
+  expect(a.beatbox).toBe(false);
+  expect(acappella({ ...tune, drums: true }).beatbox).toBe(true);
+  expect(acappella(tune, false, true).beatbox).toBe(true);
   expect(a.lines.every((l) => l.chords.length === 0)).toBe(true);
   const [bass, backing] = a.voices!;
   expect(bass.name).toBe("Bass");

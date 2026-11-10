@@ -66,6 +66,8 @@ export interface Song {
   voices?: { name: string; song: Song }[];
   /** sung a cappella: a beatboxer keeps the beat (a voice of its own, after the bass) */
   beatbox?: boolean;
+  /** a found song's score has drums (a beatboxer takes their place a cappella) */
+  drums?: boolean;
   /** the words' language, when not English (one the script doesn't tell): Italian is sung by its
    *  spelling (src/ui/italian.ts), Brazilian Portuguese by the engine's rules */
   lang?: "it" | "pt";
@@ -160,6 +162,8 @@ export function parseSong(src: string): Song {
 
 /** What the chat shows for a song: its lyrics as words (the syllable hyphens are for the notes), a ♪ per phrase */
 export function songDisplay(song: Song): string {
+  // an instrumental (its tune on "la"): one line, not a page of la's
+  if (song.lines.every((l) => /^(la|~|\s)*$/.test(l.lyrics))) return "♪ la la la …";
   return song.lines.map((l) => `♪ ${l.lyrics.replace(/([a-z'])-(?=[a-z])/gi, "$1").replace(/\s+~(?=\s|$)/g, "")}`).join("\n");
 }
 
@@ -183,9 +187,10 @@ export function songRefs(text: string): string[] {
 /**
  * The reply as shown (each song block replaced by its lyrics, set apart as its own paragraph) and
  * its songs, in order. A song asked for by name sings what `found` has for it; not found, it is
- * said so.
+ * said so, unless `quiet` (nothing was asked to be sung: a song the model offered on its own that
+ * isn't there is just left out).
  */
-export function extractSongs(text: string, found: ReadonlyMap<string, Song | null> = new Map()): { display: string; songs: Song[] } {
+export function extractSongs(text: string, found: ReadonlyMap<string, Song | null> = new Map(), quiet = false): { display: string; songs: Song[] } {
   const songs: Song[] = [];
   // a song asked for by name is the song: one the model also wrote itself (its guess at it) is dropped
   const byName = songRefs(text).length > 0;
@@ -193,14 +198,15 @@ export function extractSongs(text: string, found: ReadonlyMap<string, Song | nul
     .replace(SONG_BLOCK, (_, ref: string | undefined, body: string) => {
       if (byName && !ref) return "";
       const song = ref ? found.get(body.trim()) : parseSong(body);
-      if (ref && !song) return `\n\nI couldn't find the music for ${body.trim().split("\n")[0].replace(/\s+-\s+.*$/, "")}.\n\n`;
+      if (ref && !song) return quiet ? "" : `\n\nI couldn't find the music for ${body.trim().split("\n")[0].replace(/\s+-\s+.*$/, "")}.\n\n`;
       if (!song) return "";
       if (!song.lines.length) return "";
       songs.push(song);
       return `\n\n${songDisplay(song)}\n\n`;
     })
     .split("\n")
-    .filter((l) => !isChordSheet(l))
+    // the song-ref's "excerpt" written outside its block (a small model's slip): not said
+    .filter((l) => !isChordSheet(l) && !/^\s*(<[^>]*>\s*)*excerpt(\s*<[^>]*>)*\s*$/i.test(l))
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();

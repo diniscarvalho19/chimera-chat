@@ -97,3 +97,16 @@ test("an .mxl (a zip) is opened in the browser's way, with the container naming 
   const zip = new Uint8Array(await new Blob([...parts, ...central, new Uint8Array(e.buffer)]).arrayBuffer());
   expect(scoreToSong(await scoreXml(zip)).lines[0].lyrics).toBe("sing with me now");
 });
+
+test("an instrumental (no lyrics): the top part's tune sung on la, the rest its accompaniment", async () => {
+  // the last note a chord written bottom up: its top note is the tune's
+  const chordNote = (step: string, oct: number, dur: number) => note(step, oct, dur).replace("<note>", "<note><chord/>");
+  const flute = `<part id="P1"><measure number="1"><attributes><divisions>2</divisions></attributes>${note("C", 5, 2)}${note("E", 5, 2)}${note("C", 5, 4)}${chordNote("G", 5, 4)}</measure></part>`;
+  const xml = `<score-partwise><part-list><score-part id="P1"><part-name>Flute</part-name></score-part><score-part id="P2"><part-name>Piano</part-name></score-part></part-list>${flute}${PIANO}</score-partwise>`;
+  const song = scoreToSong(await scoreXml(new TextEncoder().encode(xml)));
+  expect(song.lines.map((l) => l.lyrics)).toEqual(["la la la"]);
+  expect(songNotes(song, 0).map((x) => x.midi)).toEqual([60, 64, 67]);
+  expect(song.voices).toBeUndefined();
+  expect(song.parts?.every((p) => !p.vocal)).toBe(true);
+  expect(song.parts?.some((p) => p.midi === 72)).toBe(true); // the chord's lower note, played
+});

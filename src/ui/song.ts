@@ -132,14 +132,15 @@ export function harmonize(song: Song, n = 2): { name: string; song: Song }[] {
  * A song sung a cappella (asked for): no band. The voices take its instruments' parts: a bass on
  * the lowest note sounding at each moment ("bom", "bum", "dum"), a backing voice on the highest ("doo",
  * "ooh" on a long one) and a middle voice on the one between ("dah", "ah"), each moved by octaves
- * into a singer's range; and a beatboxer keeps the beat. A song with chords and no parts
+ * into a singer's range; and, with `beat` (the score had drums, or a beatbox was asked for), a
+ * beatboxer keeps the beat. A song with chords and no parts
  * (the model's own) gets them from its chords: the bass on each root, the backing on a chord tone;
  * with neither, harmony under the tune.
  * The song's own sung parts stay first; these are added after them.
  * With `band` (more voices asked for, not a cappella) the band keeps playing under them, no beatboxer.
  */
 // ponytail: three lines (top, middle and bottom of the accompaniment) and one groove for every song
-export function acappella(song: Song, band = false): Song {
+export function acappella(song: Song, band = false, beat = !!song.drums): Song {
   let parts: PartNote[] = (song.parts ?? []).filter((p) => !p.vocal);
   if (!parts.length) {
     // from the chords, each spread over its line as the band would play them
@@ -157,7 +158,7 @@ export function acappella(song: Song, band = false): Song {
   if (!parts.length) {
     // nothing to take the voices from (no instruments, no chords): harmony under the tune instead
     const own = song.voices?.length ?? 0;
-    return { ...song, lines, beatbox: true, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...(own < 2 ? harmonize(song, 2 - own) : [])] };
+    return { ...song, lines, beatbox: beat, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...(own < 2 ? harmonize(song, 2 - own) : [])] };
   }
   // the lowest and the highest note at each onset, each line one note at a time
   const onsets = [...new Set(parts.map((p) => p.t))].sort((a, b) => a - b);
@@ -194,7 +195,7 @@ export function acappella(song: Song, band = false): Song {
     ...(middle.length >= 4 ? [voice(middle, 52, 64, (b) => (b >= 1.5 ? "ah" : "dah"), "Middle")] : []),
   ];
   if (band) return { ...song, voices: [...(song.voices ?? []), ...sung] };
-  return { ...song, lines, beatbox: true, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...sung] };
+  return { ...song, lines, beatbox: beat, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...sung] };
 }
 
 /**

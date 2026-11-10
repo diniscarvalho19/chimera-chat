@@ -65,3 +65,16 @@ test("a line of notes with no words is sung on 'la', not the note names", () => 
   const s = parseSong("♪ C4 C4 G4/2 R/1\nA4 B4 | Em G");
   expect(s.lines.map((l) => [l.lyrics, l.notes.length, l.chords.length])).toEqual([["la la la", 4, 0], ["la la", 2, 2]]);
 });
+
+test("an instrumental shows as one line; an 'excerpt' written outside its block isn't said", () => {
+  const tune = { bpm: 100, lines: [{ lyrics: "la la ~ la", notes: [], chords: [] }, { lyrics: "la la", notes: [], chords: [] }] };
+  const { display, songs } = extractSongs("Here it is!\n```song-ref\nFür Elise\n```\nExcerpt\nEnjoy.", new Map([["Für Elise", tune]]));
+  expect(songs).toHaveLength(1);
+  expect(display).toBe("Here it is!\n\n♪ la la la …\n\nEnjoy.");
+});
+
+test("a song the model offered unasked that isn't there is left out quietly; a wrapped 'excerpt' isn't said", () => {
+  const reply = "One is this:\n```song-ref\nLisboa Café\n```\n<center>excerpt</center>\nLovely.";
+  expect(extractSongs(reply, new Map(), true).display).toBe("One is this:\n\nLovely.");
+  expect(extractSongs(reply).display).toBe("One is this:\n\nI couldn't find the music for Lisboa Café.\n\nLovely.");
+});

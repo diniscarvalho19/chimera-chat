@@ -14,6 +14,10 @@ export interface SongEntry {
   voices?: number;
   /** the words' language, when not English */
   lang?: Song["lang"];
+  /** added by hand (not from PDMX's build): a well-known song in its language, listed first for it */
+  byHand?: boolean;
+  /** a piece with no words (a piano piece, a theme), or none that can be sung: its tune sung on "la" */
+  instrumental?: boolean;
 }
 
 const words = (s: string): string[] =>
@@ -62,18 +66,20 @@ export function findEntry(index: SongEntry[], query: string): SongEntry | null {
  * The song a message names, if the songbook has it: the title with most words in the message, all
  * of them or its first two or more ("happy birthday" for "Happy Birthday to You"). Only telling
  * words count: "do you know", "can you sing one" name no song; a one-word title only if it's a
- * long word ("home" alone doesn't count). The artist settles a tie.
+ * long word ("home" alone doesn't count), a word said twice once ("Day by Day" is "day"). Its first
+ * word alone isn't it ("what's the weather like" doesn't name "The Weather Network Song"). The
+ * artist settles a tie.
  */
 export function songMentioned(index: SongEntry[], message: string): SongEntry | null {
   const m = new Set(words(message).filter((w) => !COMMON.has(w)));
   let best: SongEntry | null = null, bestScore = 0;
   for (const e of index) {
-    const t = words(e.title).filter((w) => !COMMON.has(w));
+    const t = [...new Set(words(e.title).filter((w) => !COMMON.has(w)))];
     let lead = 0;
     while (lead < t.length && m.has(t[lead])) lead++;
     const all = t.length > 0 && t.every((w) => m.has(w));
-    // all of a title of two words or more (or of one long word); or its start: two words, or one long one
-    if (!(all ? t.length > 1 || t[0].length >= 6 : lead >= 2 || (lead === 1 && t[0].length >= 7))) continue;
+    // all of a title of two words or more (or of one long word); or its first two words
+    if (!(all ? t.length > 1 || t[0].length >= 6 : lead >= 2)) continue;
     const score = (all ? t.length : lead) * 10 + words(e.artist).filter((w) => m.has(w)).length;
     if (score > bestScore) [best, bestScore] = [e, score];
   }
@@ -89,7 +95,10 @@ const COMMON = new Set(
 const GENERIC = /\b(misc|traditional|trad|unknown|anon|anonymous|folk)\b/i;
 
 /** the artist's own name in a credit ("Oasis Arr. Mariette Wilson" → "oasis") */
-const artistName = (credit: string): string[] => words(credit.split(/\s+(?:arr\.?|arranged|feat\.?|ft\.?|&|and|with)\s+/i)[0]);
+const artistName = (credit: string): string[] =>
+  words(credit.replace(CREDIT_ROLES, "").split(/\s+(?:arr\.?|arranged|feat\.?|ft\.?|&|and|with)\s+/i)[0]);
+/** a credit's roles before the name ("Music & Lyrics: Stephen Foster", "Words and Music by …"): not the artist */
+const CREDIT_ROLES = /^\s*(?:(?:music|lyrics|words|melody|text|composed|composer|written|arranged|arr\.?)\s*(?:&|and|by|:|,)?\s*)+/i;
 
 /**
  * The artist a message names, if the songbook has songs of theirs, and those songs: every word of
@@ -111,8 +120,9 @@ export function artistMentioned(index: SongEntry[], text: string): { artist: str
   return [...by.entries()].sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
 }
 
-/** a song as the model is told of it: "Title" by Artist */
-export const songName = (e: SongEntry): string => `"${e.title}"${e.artist && !GENERIC.test(e.artist) ? ` by ${e.artist.split(/\s+arr\.?\s+/i)[0]}` : ""}`;
+/** a song as the model is told of it: "Title" by Artist, and if it has no words, that it hasn't */
+export const songName = (e: SongEntry): string =>
+  `"${e.title}"${e.artist && !GENERIC.test(e.artist) ? ` by ${e.artist.split(/\s+arr\.?\s+/i)[0]}` : ""}${e.instrumental ? " (the songbook has only its tune, no words: you sing it on la; say so before singing it)" : ""}`;
 
 /**
  * Songs whose title or artist has a telling word of the message ("christmas", "love", "beatles"),
@@ -123,6 +133,19 @@ export function searchSongs(index: SongEntry[], message: string, n = 15): SongEn
   if (!q.size) return [];
   return index.filter((e) => [...words(e.title), ...words(e.artist)].some((w) => q.has(w))).slice(0, n);
 }
+/**
+ * The language a message asks about ("portuguese music", "sing in italian"), if the songbook has
+ * songs in it, and its songs with words, most popular first.
+ */
+export function languageSongs(index: SongEntry[], message: string, n = 25): { language: string; titles: string[] } | null {
+  const lang = words(message).map((w) => LANG_WORDS[w]).find(Boolean);
+  if (!lang) return null;
+  const songs = index.filter((e) => e.lang === lang && !e.instrumental);
+  const titles = [...new Set([...songs.filter((e) => e.byHand), ...songs.filter((e) => !e.byHand)].map((e) => e.title))];
+  return { language: lang === "pt" ? "Portuguese" : "Italian", titles: titles.slice(0, n) };
+}
+/** words naming a language the songbook has songs in */
+const LANG_WORDS: Record<string, SongEntry["lang"]> = { portuguese: "pt", brazilian: "pt", brazil: "pt", brasil: "pt", portugal: "pt", italian: "it", italy: "it", italia: "it" };
 /** words of asking about the songbook itself, not a topic */
 const BROWSE = new Set("list songbook music musics artists artist bands band singers singer choir choirs harmony harmonies voices parts know have sing songs song".split(" "));
 
@@ -156,7 +179,7 @@ export async function findSong(query: string): Promise<{ entry: SongEntry; song:
   const r = await fetch(`${base()}${entry.id}.mxl`);
   if (!r.ok) return null;
   try {
-    return { entry, song: scoreToSong(await scoreXml(new Uint8Array(await r.arrayBuffer())), { maxBars, lang: entry.lang }) };
+    return { entry, song: scoreToSong(await scoreXml(new Uint8Array(await r.arrayBuffer())), { maxBars, lang: entry.lang, instrumental: entry.instrumental }) };
   } catch (e) {
     console.warn("songbook:", entry.title, e);
     return null;

@@ -5,7 +5,7 @@ import { hasHan } from "../../wasm/engine.ts";
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
-import { artistMentioned, choirSongs, findSong, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
+import { artistMentioned, choirSongs, findSong, languageSongs, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
 import { acappella, ensemble, harmonize } from "../song.ts";
 
 /** a message asking for a song without instruments (however it's spelt) */
@@ -39,7 +39,11 @@ async function withSongbook(message: string, before = ""): Promise<string> {
   if (artist)
     notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"`).join(", ")}. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
   if (CHOIR.test(message) || MAX_VOICES.test(message)) notes.push(`songs in the songbook sung with choir parts (other voices singing with you, each with a face), the fullest first; unless another is asked for, sing one of the first: ${choirSongs(index).map((e) => `${songName(e)} (${e.voices} choir part${e.voices! > 1 ? "s" : ""})`).join(", ")}`);
-  const topic = song || artist ? [] : searchSongs(index, message);
+  // songs on a topic only when the message is about music ("any christmas songs?", not "what time is it")
+  const language = languageSongs(index, message);
+  if (language)
+    notes.push(`the songbook's ${language.language} songs are: ${language.titles.map((t) => `"${t}"`).join(", ")}. Answer from this list: name a few of them (the first are the best known). To sing one, use a song-ref block with exactly one of these titles; it has no other ${language.language} songs, so never name, suggest or sing any other ${language.language} song`);
+  const topic = song || artist || language || !MUSICAL.test(message) ? [] : searchSongs(index, message);
   if (topic.length) notes.push(`songs in the songbook on that: ${topic.map(songName).join(", ")}`);
   if (!notes.length && ABOUT_SONGBOOK.test(message)) notes.push(`your songbook (what you can sing from real scores): ${songbookOverview(index)}`);
   if (!notes.length && /\bsing\b/i.test(message))
@@ -47,6 +51,8 @@ async function withSongbook(message: string, before = ""): Promise<string> {
   return notes.length ? `${message}\n\n(Note from the app, your songbook's own answer: ${notes.join("; ")}. Answer from this; to sing one, use a song-ref block with its exact title.)` : message;
 }
 
+/** a message about music: singing, songs, tunes, pieces */
+const MUSICAL = /\b(sing|sang|sung|song|music|tune|piece|play|hymn|carol|anthem|lullaby|aria|melod|ballad|opera|jazz|rock|pop|folk|classical|instrumental|repertoire)/i;
 /** asking about choirs, harmony, several voices */
 const CHOIR = /\b(choirs?|harmon\w*|a ?cappella|vocal (groups?|harmon\w*)|multi-?(part|voice|layered)|layered vocals?|several voices|other voices|more voices|backing (vocals?|singers?)|duets?|quartets?)\b/i;
 /** asking what the songbook has */
@@ -322,7 +328,8 @@ export function ChatRight() {
         setStatus("Getting the Chinese words ready…");
         await zh.load().catch(() => {}); // pinyin still works
       }
-      const { display, songs } = extractSongs(clean, found);
+      // a song the model offered unasked that isn't there is left out, not apologised for
+      const { display, songs } = extractSongs(clean, found, !/\b(sing|sang|play)\b/i.test(message));
       const cappella = A_CAPPELLA.test(message);
       // asked for harmony: a score's instrument parts sung over its band; otherwise up to two
       // backing singers on every song that has fewer of its own
@@ -333,7 +340,8 @@ export function ChatRight() {
           if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
         });
       // asked a cappella: no band; voices sing its instruments' parts
-      if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song)));
+      // a beatboxer where the score had drums, or when asked for
+      if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song, false, !!song.drums || /\bbeat ?box/i.test(message))));
       // asked for the most voices: every line doubled at the octave
       if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
       const { text, blocks } = moodBlocks(display, moodOf);

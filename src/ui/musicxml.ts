@@ -145,28 +145,36 @@ function walk(part: string): { notes: Note[]; harmony: { t: number; bar: number;
 }
 
 /**
- * The score's sung melody as a chat song, and its other parts as the accompaniment. `maxBars` caps
+ * The score's sung melody as a chat song, and its other parts as the accompaniment (an
+ * instrumental's top part is its melody, sung on "la"; `instrumental` sings any score that way,
+ * one whose words can't be sung). `maxBars` caps
  * the excerpt (sung bars, from the first lyric); `count` gives a word's syllables as the voice will
  * sing it (in the score's `lang`: the engine's dictionary for English).
  */
-export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: string) => number; lang?: Song["lang"] } = {}): Song {
-  const maxBars = o.maxBars ?? Infinity;
+export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: string) => number; lang?: Song["lang"]; instrumental?: boolean } = {}): Song {
   const sylls = syllablesFor(o.lang);
   const count = o.count ?? ((w: string) => sylls(w).filter((s) => !s.melisma).length);
   const lang = o.lang ? { lang: o.lang } : {};
   const names = new Map([...xml.matchAll(/<score-part\s[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/score-part>/g)].map((m) => [m[1], unescape(tag(m[2], "part-name") ?? "").replace(/\s+/g, " ").toLowerCase()]));
   const parts = [...xml.matchAll(/<part(\s[^>]*)?>([\s\S]*?)<\/part>/g)].map((m) => ({ id: attrsOf(m[1] ?? "").id, xml: m[2], lyrics: m[2].match(/<lyric/g)?.length ?? 0 }));
   // the melody: the first part (scores list it on top) with nearly the most lyrics; a choir's
-  // tenor may have a few more words than its soprano, but it isn't the tune
-  const most = Math.max(0, ...parts.map((p) => p.lyrics));
-  const main = parts.find((p) => p.lyrics >= 0.8 * most);
-  if (!main?.lyrics) throw new Error("the score has no lyrics");
+  // tenor may have a few more words than its soprano, but it isn't the tune. With no lyrics at all
+  // (an instrumental) the top part's tune is sung on "la"
+  const most = o.instrumental ? 0 : Math.max(0, ...parts.map((p) => p.lyrics));
+  const main = parts.find((p) => p.lyrics >= 0.8 * most && /<pitch>/.test(p.xml));
+  if (!main) throw new Error("the score has no notes");
+  // an instrumental is sung for its first 32 bars at most (a symphony would be 45 minutes of "la")
+  // ponytail: its tune is its top part's, so an orchestra's flute when it has one; pick the busiest part if that sounds wrong
+  const maxBars = Math.min(o.maxBars ?? Infinity, most ? Infinity : 32);
   const tempo = attrs(xml, "sound").find((a) => a.tempo)?.tempo ?? tag(xml, "per-minute");
   const bpm = Math.min(200, Math.max(40, Number(tempo) || 100));
 
   const { notes, harmony, barStarts, beatsPerBar } = walk(main.xml);
   const voice = lyricVoice(notes);
-  const evs = sungEvents(notes, voice);
+  // an instrumental's tune is the top of its chords (a chord sings the note written first)
+  const top = most ? notes : topNotes(notes);
+  const evs = sungEvents(top, voice);
+  if (!most) for (const e of evs) if (e.midi !== null) Object.assign(e, { text: "la", syllabic: "single" });
 
   // the excerpt: from the first lyric, for maxBars bars (ended at a word's end)
   const first = evs.findIndex((e) => e.text);
@@ -189,7 +197,7 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
   // where the excerpt starts (a word begun before it is left out) to where it ends
   const voices: { name: string; song: Song; id: string }[] = [];
   for (const p of parts) {
-    if (p === main || p.lyrics < 0.3 * main.lyrics) continue;
+    if (p === main || !most || !p.lyrics || p.lyrics < 0.3 * main.lyrics) continue;
     const ns = walk(p.xml).notes;
     const win = within(sungEvents(ns, lyricVoice(ns)), t0, t1);
     const lines = win.some((e) => e.text) ? toLines(win, 0, count, []) : [];
@@ -217,7 +225,7 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
   // the sung part's other voices: sung lines if they have lyrics of their own (a piano written in
   // the singer's part has none); other parts: sung if they have lyrics or a singer's name
   const lyricVoices = new Set(notes.flatMap((n) => (n.lyric ? [n.voice] : [])));
-  add(notes, (n) => lyricVoices.has(n.voice), (n) => n.voice === voice && !n.chord);
+  add(top, (n) => lyricVoices.has(n.voice), (n) => n.voice === voice && !n.chord);
   for (const p of parts) {
     if (p === main || voices.some((v) => v.id === p.id)) continue;
     const name = names.get(p.id) ?? "";
@@ -234,8 +242,20 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
     lines: toLines(sung, shift, count, chordsAt),
     ...(under.length ? { parts: under.slice(0, 3000) } : {}),
     ...(voices.length ? { voices: voices.map(({ name, song }) => ({ name, song })) } : {}),
+    ...(/<unpitched[\s/>]/.test(xml) ? { drums: true } : {}),
     meter: { beats: beatsPerBar, at: t0 - (barStarts[sung[0].bar] ?? t0) },
   };
+}
+
+/** the notes with each chord's first note raised to its highest (the rest of the chord stays, as accompaniment) */
+function topNotes(notes: Note[]): Note[] {
+  const out = notes.map((n) => ({ ...n }));
+  let head: Note | null = null;
+  for (const n of out) {
+    if (!n.chord) head = n;
+    else if (head && n.midi !== null && head.midi !== null && n.midi > head.midi) [head.midi, n.midi] = [n.midi, head.midi];
+  }
+  return out;
 }
 
 /** the voice of a part with the most lyrics */
