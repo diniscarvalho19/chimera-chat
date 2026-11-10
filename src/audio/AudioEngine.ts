@@ -112,7 +112,6 @@ export class AudioEngine {
         this.latestAt = performance.now();
         this.latestCreature = null;
         this.load = m.load;
-        this.engineCost = Math.max(this.engineCost, m.load);
         for (const l of this.listeners) l(m);
       } else if (m.type === "ctelemetry") {
         this.latestCreature = m;
@@ -143,22 +142,44 @@ export class AudioEngine {
 
   /** the extra singers (a found song's other sung parts), each its own engine on the same clock */
   private choirNodes: { node: AudioWorkletNode; gain: GainNode; latest: TelemetryMessage | null }[] = [];
-  /** the most one engine has been seen to cost (of its render budget), the lead's or a singer's */
-  engineCost = 0;
+  /**
+   * One audio context per extra singer, made once and kept: each context renders on an audio thread
+   * of its own, and one thread holds only about three engines (four extra singers on the lead's ran
+   * its clock 13% slow, the sound breaking up). Contexts start together to within a few ms.
+   */
+  private choirCtxs: { ctx: AudioContext; out: GainNode }[] = [];
   private shedAt = 0;
 
+  /** room for n extra singers: their contexts made (the worklet loaded in each) and running */
+  async choirRoom(n: number): Promise<void> {
+    try {
+      while (this.choirCtxs.length < n) {
+        const ctx = new AudioContext({ latencyHint: "interactive" });
+        await ctx.audioWorklet.addModule(workletUrl);
+        const out = ctx.createGain();
+        out.gain.value = this.master?.gain.value ?? 0.8;
+        out.connect(ctx.destination);
+        this.choirCtxs.push({ ctx, out });
+      }
+      await Promise.all(this.choirCtxs.map((c) => c.ctx.resume()));
+    } catch (e) {
+      // the singers without a context of their own sing on the lead's (and may be shed)
+      console.warn("choir contexts:", e);
+    }
+  }
+
   /**
-   * The audio thread's load: every engine's own render time added up (each measures only its own).
-   * Over 0.9 the thread is about to fall behind (and the output to break up): the last singer goes.
+   * A singer's thread over 0.9 of its budget is about to fall behind (more singers than the machine
+   * has cores for): the last singer goes.
    */
   private shed(): void {
-    const total = this.choirNodes.reduce((s, c) => s + (c.latest?.load ?? 0), this.load);
+    const worst = Math.max(0, ...this.choirNodes.map((c) => c.latest?.load ?? 0));
     const now = performance.now();
     // a third of a second between drops: the loads (averages over ~50 ms) settle first
-    if (total <= 0.9 || !this.choirNodes.length || now - this.shedAt < 300) return;
+    if (worst <= 0.9 || !this.choirNodes.length || now - this.shedAt < 300) return;
     this.shedAt = now;
     this.closeSinger(this.choirNodes.pop()!);
-    console.warn(`audio thread at ${Math.round(total * 100)}%: one singer fewer (${this.choirNodes.length} left)`);
+    console.warn(`a singer's audio thread at ${Math.round(worst * 100)}%: one singer fewer (${this.choirNodes.length} left)`);
   }
 
   private closeSinger(c: (typeof this.choirNodes)[number]): void {
@@ -173,8 +194,8 @@ export class AudioEngine {
   }
 
   /**
-   * Sing plans on extra voices, one per plan, each with its own body; all sent in this one task, so
-   * they start on the same render quantum as a plan scheduled with them. Nodes are made for the song
+   * Sing plans on extra voices, one per plan, each with its own body, each in a context of its own
+   * (`choirRoom` first); all sent in this one task, so they start with a plan scheduled with them. Nodes are made for the song
    * and closed a second after its last note (an idle engine costs nearly what a singing one does).
    */
   singChoir(
@@ -188,16 +209,17 @@ export class AudioEngine {
     if (!ctx || !this.master) return;
     this.stopChoir();
     while (this.choirNodes.length < parts.length) {
-      const node = new AudioWorkletNode(ctx, "chimera", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { module: chimeraModule() } });
-      const gain = ctx.createGain();
+      // its own context if there's room made, else the lead's
+      const own = this.choirCtxs[this.choirNodes.length] ?? { ctx, out: this.master };
+      const node = new AudioWorkletNode(own.ctx, "chimera", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { module: chimeraModule() } });
+      const gain = own.ctx.createGain();
       gain.gain.value = 0.7; // the lead stays in front
-      node.connect(gain).connect(this.master);
+      node.connect(gain).connect(own.out);
       const voice = { node, gain, latest: null as TelemetryMessage | null };
       node.port.onmessage = (e: MessageEvent<FromWorklet>) => {
         if (e.data.type === "telemetry") {
           if (!this.choirNodes.includes(voice)) return; // closed: its last few messages
           voice.latest = e.data;
-          this.engineCost = Math.max(this.engineCost, e.data.load);
           this.shed();
         } else if (e.data.type === "error") console.error("choir worklet:", e.data.message);
       };
@@ -302,6 +324,7 @@ export class AudioEngine {
 
   setVolume(v: number): void {
     if (this.master && this.ctx) this.master.gain.setTargetAtTime(v, this.ctx.currentTime, 0.02);
+    for (const c of this.choirCtxs) c.out.gain.setTargetAtTime(v, c.ctx.currentTime, 0.02);
   }
 
   setBody(body: BodyMix): void {

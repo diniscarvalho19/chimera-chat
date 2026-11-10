@@ -4,6 +4,10 @@ Chat with an on-device AI model through a simulated voice. The live vocal-tract 
 the left, the chat on the right. Each reply is spoken one paragraph at a time, and the text appears
 word by word in step with the voice.
 
+Live at **https://chimera-chat.pages.dev** (Cloudflare Pages). It isn't connected to the repo: a push
+deploys nothing. Deploy by hand after `bun run build`:
+`bunx wrangler pages deploy dist --project-name chimera-chat --branch main`.
+
 Built on [CHIMERA](https://github.com/jamesondh/chimera-vocal-synth), a physical-modeling voice
 synthesizer (Rust engine compiled to WebAssembly for an AudioWorklet). Everything else from
 CHIMERA (play, speak, sing, beatbox, bestiary, duet, CLI, docs, research tools) was removed here;

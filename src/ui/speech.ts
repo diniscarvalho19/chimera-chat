@@ -159,9 +159,10 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
     return l.chords.map((tones, k) => ({ tones, t0: lineAt[i] - T0 + k * span, t1: lineAt[i] - T0 + (k + 1) * span }));
   });
   if (chords.length) chords[chords.length - 1].t1 += beat; // the last chord rings past the last note
-  // as many other singers as the audio thread has room for, each costing the most one engine has
-  // been seen to (the rest are heard as "ooh"s in the band); if that's too many the engine sheds some
-  const room = Math.max(0, Math.floor(0.8 / Math.max(engine.engineCost, 0.1)) - 1);
+  // as many other singers as there are cores for, each on an audio thread of its own (the main
+  // thread and the lead's take two); the rest are heard as "ooh"s in the band. If that's too many
+  // the engine sheds some
+  const room = Math.max(0, (navigator.hardwareConcurrency || 4) - 2);
   // a beatboxer (a cappella) takes the place after the bass: the groove before the inner lines
   const all = song.voices ?? [];
   const beatAt = song.beatbox ? Math.min(all.length, all.findIndex((v) => v.name === "Bass") + 1 || all.length) : -1;
@@ -174,6 +175,7 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
     const p = sungPlan(v.song, vbody, 0);
     return p ? [{ name: v.name, body: vbody, ...p }] : [];
   });
+  await engine.choirRoom(voices.length + (beatSung ? 1 : 0));
   const sp = playPlan(plan, words.filter((w) => w.text !== "~"), song.lines.map((l) => l.lyrics).join(" | "));
   // the worklets time their plans from when they get them: the other singers and the band start
   // on the same instant (sent in this same task)
