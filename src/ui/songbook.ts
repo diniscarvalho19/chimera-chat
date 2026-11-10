@@ -71,7 +71,8 @@ export function findEntry(index: SongEntry[], query: string): SongEntry | null {
  * artist settles a tie.
  */
 export function songMentioned(index: SongEntry[], message: string): SongEntry | null {
-  const m = new Set(words(message).filter((w) => !COMMON.has(w)));
+  const said = words(message).filter((w) => !COMMON.has(w));
+  const m = new Set(said);
   let best: SongEntry | null = null, bestScore = 0;
   for (const e of index) {
     const t = [...new Set(words(e.title).filter((w) => !COMMON.has(w)))];
@@ -80,6 +81,13 @@ export function songMentioned(index: SongEntry[], message: string): SongEntry | 
     const all = t.length > 0 && t.every((w) => m.has(w));
     // all of a title of two words or more (or of one long word); or its first two words
     if (!(all ? t.length > 1 || t[0].length >= 6 : lead >= 2)) continue;
+    // its first words, then another word where the title goes on: another song ("Everybody Loves
+    // Somebody" isn't "Everybody Loves Saturday Night")
+    if (!all) {
+      const at = said.findIndex((w, i) => t.slice(0, lead).every((x, k) => said[i + k] === x));
+      const after = at < 0 ? undefined : said[at + lead];
+      if (after !== undefined && after !== t[lead]) continue;
+    }
     const score = (all ? t.length : lead) * 10 + words(e.artist).filter((w) => m.has(w)).length;
     if (score > bestScore) [best, bestScore] = [e, score];
   }
@@ -103,25 +111,36 @@ const CREDIT_ROLES = /^\s*(?:(?:music|lyrics|words|melody|text|composed|composer
 /**
  * The artist a message names, if the songbook has songs of theirs, and those songs: every word of
  * the artist's name in the message, one with a word of four letters or more (so "U2" or "Al" alone
- * don't count), the longest name winning. For telling the model what it can sing of theirs; `tunes`
+ * don't count); or two or more of a credit's words in a row, said in a row ("dean martin" in
+ * "Johnny Mark Dean Martin"). The most words named wins ("dean martin" over a credit "Martin"). For telling the model what it can sing of theirs; `tunes`
  * are those it has only the tune of (no words, sung on "la").
  */
 export function artistMentioned(index: SongEntry[], text: string): { artist: string; titles: string[]; tunes: string[] } | null {
-  const m = new Set(words(text));
+  const said = words(text), m = new Set(said);
   const by = new Map<string, { artist: string; titles: string[]; tunes: string[] }>();
   for (const e of index) {
     if (GENERIC.test(e.artist)) continue;
     const name = artistName(e.artist);
-    if (!name.length || !name.some((w) => w.length >= 4) || !name.every((w) => m.has(w))) continue;
-    const key = name.join(" ");
-    const g = by.get(key) ?? { artist: e.artist.split(/\s+arr\.?\s+/i)[0], titles: [], tunes: [] };
+    if (!name.length || !name.some((w) => w.length >= 4)) continue;
+    let key = name.every((w) => m.has(w)) ? name.join(" ") : "";
+    if (!key) {
+      // the longest run of the credit's words (two or more) said in a row
+      for (let i = 0; i < name.length; i++)
+        for (let j = i + 2; j <= name.length; j++) {
+          const run = name.slice(i, j);
+          if (run.join(" ").length > key.length && said.some((_, s) => run.every((w, k) => said[s + k] === w))) key = run.join(" ");
+        }
+      if (!key) continue;
+    }
+    const full = key === name.join(" ");
+    const g = by.get(key) ?? { artist: full ? e.artist.split(/\s+arr\.?\s+/i)[0] : key.replace(/\b\w/g, (c) => c.toUpperCase()), titles: [], tunes: [] };
     if (g.titles.length < 12) {
       g.titles.push(e.title);
       if (e.instrumental) g.tunes.push(e.title); // only its tune: no words
     }
     by.set(key, g);
   }
-  return [...by.entries()].sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;
+  return [...by.entries()].sort((a, b) => b[0].split(" ").length - a[0].split(" ").length || b[0].length - a[0].length)[0]?.[1] ?? null;
 }
 
 /** a song as the model is told of it: "Title" by Artist, and if it has no words, that it hasn't */

@@ -9,8 +9,6 @@ const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((
 
 function TopBar() {
   const started = useStore((s) => s.started);
-  const volume = useStore((s) => s.volume);
-  const setVolume = useStore((s) => s.setVolume);
   const [load, setLoad] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setLoad(engine.load), 500);
@@ -23,10 +21,6 @@ function TopBar() {
         <span className="tagline">A voice grown from a simulated airway</span>
       </div>
       <div className="topbar-right">
-        <label className="volume">
-          <span>Volume</span>
-          <input type="range" min={0} max={1} step={0.01} value={volume} onChange={(e) => setVolume(Number(e.target.value))} style={{ "--pos": `${volume * 100}%` } as React.CSSProperties} />
-        </label>
         {started && (
           <span className="load" title="Share of the audio thread's time budget used by the simulation">
             Engine load {Math.round(load * 100)} %

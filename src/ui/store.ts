@@ -42,7 +42,6 @@ interface State {
   setBody: (b: BodyMix) => void;
   setSource: (v: Partial<VoiceSource>) => void;
   setArtic: (v: Partial<HumanArtic>, tipFree?: boolean) => void;
-  setVolume: (v: number) => void;
   setView: (v: Partial<ViewOptions>) => void;
 }
 
@@ -110,10 +109,6 @@ export const useStore = create<State>((set, get) => ({
   setArtic: (v, tipFree) => {
     set((s) => ({ artic: { ...s.artic, ...v }, tipFree: tipFree ?? s.tipFree }));
     engine.setArtic(v, tipFree);
-  },
-  setVolume: (v) => {
-    set({ volume: v });
-    engine.setVolume(v);
   },
   setView: (v) => set((s) => ({ view: { ...s.view, ...v } })),
 }));

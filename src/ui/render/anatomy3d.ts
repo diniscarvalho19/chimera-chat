@@ -672,7 +672,9 @@ export class Anatomy3D {
     this.compact = w < 560;
     this.camera.aspect = w / h;
     // on a wide screen the head sits left of centre, leaving the right for the readouts
-    if (this.compact || this.centred) this.camera.clearViewOffset();
+    // centred (no readouts): the face a little lower, nearer the middle of a tall screen
+    if (this.centred) this.camera.setViewOffset(w, h, 0, -0.06 * h, w, h);
+    else if (this.compact) this.camera.clearViewOffset();
     else this.camera.setViewOffset(w, h, 0.1 * w, 0, w, h);
     this.camera.updateProjectionMatrix();
     this.beams.setResolution(w, h);

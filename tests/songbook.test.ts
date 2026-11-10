@@ -93,3 +93,20 @@ test("the songbook searched for the model: a topic, choir songs, the whole in br
   expect(songName(idx[3])).toBe('"Amazing Grace"'); // a generic credit isn't named
   expect(songbookOverview(idx)).toStartWith("4 songs, 2 of them with choir parts.");
 });
+
+test("a title's first words followed by another word name another song", async () => {
+  const { songMentioned } = await import("../src/ui/songbook.ts");
+  const idx = [{ id: "s", title: "everybody loves saturday night", artist: "Misc Traditional" }];
+  expect(songMentioned(idx, "Everybody Loves Somebody")).toBeNull();
+  expect(songMentioned(idx, "sing everybody loves")?.id).toBe("s");
+});
+
+test("an artist named by two words in a row of a longer credit, over a one-word credit", async () => {
+  const { artistMentioned } = await import("../src/ui/songbook.ts");
+  const idx = [
+    { id: "m", title: "Maud Irving", artist: "Martin" },
+    { id: "r", title: "Rudolph the red nosed reindeer", artist: "Johnny Mark Dean Martin" },
+  ];
+  expect(artistMentioned(idx, "check the list, what dean martin songs do u know?")).toEqual({ artist: "Dean Martin", titles: ["Rudolph the red nosed reindeer"], tunes: [] });
+  expect(artistMentioned(idx, "any songs by martin?")?.titles).toEqual(["Maud Irving"]);
+});

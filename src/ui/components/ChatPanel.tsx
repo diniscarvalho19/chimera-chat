@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { MOUTH_OPEN, MOUTH_SHUT, useStore } from "../store.ts";
 import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p, zh } from "../speech.ts";
 import { hasHan } from "../../wasm/engine.ts";
-import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song, type VoiceChange } from "../chatText.ts";
 import { defaultF0 } from "../body.ts";
@@ -194,11 +193,8 @@ export function ChatRight() {
     r.start();
     setRec(r);
   };
-  const [rate, setRate] = useState(1.35);
   const [talking, setTalking] = useState(false);
   const sp = useRef<Speaking | null>(null);
-  const opts = useRef({ rate });
-  opts.current = { rate };
   const list = useRef<HTMLDivElement>(null);
   const count = useRef(0);
   /** append a message; its index */
@@ -250,7 +246,7 @@ export function ChatRight() {
         feel(mood);
         useStore.getState().setArtic(MOUTH_OPEN);
         // pitch and pace: the body's own, times the model's voice, times the mood's
-        const v = MOOD[mood].voice, { body, voice } = useStore.getState(), rate = opts.current.rate;
+        const v = MOOD[mood].voice, { body, voice } = useStore.getState(), rate = RATE;
         const plan = song ? await singSong(song, body) : await speakText(text, { ipa: false, body, rate: rate * voice.rate * v.rate, f0: defaultF0(body) * voice.pitch * v.f0 });
         if (sp.current !== s) return; // stopped meanwhile
         if (plan) {
@@ -372,9 +368,7 @@ export function ChatRight() {
 
   return (
     <div className="right right-chat">
-      <Screen className="s-chat" title="Chat" sub={local ? "On-device AI" : "OpenRouter"}
-        tools={<Slider label="Rate" value={rate} min={0.5} max={1.8} onChange={setRate} format={(v) => `${v.toFixed(2)}×`} />}
-      >
+      <Screen className="s-chat" title="Chat" sub={local ? "On-device AI" : "OpenRouter"}>
         <div className="chat">
           <div className="chat-log" ref={list} aria-live="polite">
             {!ready && local && (
@@ -388,7 +382,6 @@ export function ChatRight() {
                 }}
               />
             )}
-            {ready && msgs.length === 0 && <p className="hint">Say something. The answer comes here, and out loud.</p>}
             {msgs.map((m, i) => (
               <div key={i} className={`chat-msg chat-${m.role}`}>
                 {m.text.slice(0, m.shown)}
@@ -490,6 +483,9 @@ function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: nu
     </div>
   );
 }
+
+/** the speaking rate, over the mood's and the voice tag's */
+const RATE = 1.35;
 
 const ICONS = {
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
