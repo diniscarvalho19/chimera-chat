@@ -71,7 +71,7 @@ test("an artist named: their songs listed; another's song with a title they neve
     { id: "c", title: "Wonderwall by Oasis", artist: "Oasis Arr. Mariette Wilson" },
     { id: "d", title: "Amazing Grace", artist: "Misc Praise Songs" },
   ];
-  expect(artistMentioned(idx, "do you know any coldplay songs?")).toEqual({ artist: "Coldplay", titles: ["Fix You"] });
+  expect(artistMentioned(idx, "do you know any coldplay songs?")).toEqual({ artist: "Coldplay", titles: ["Fix You"], tunes: [] });
   expect(artistMentioned(idx, "sing something by oasis")?.titles).toEqual(["Wonderwall by Oasis"]);
   expect(artistMentioned(idx, "sing me a song")).toBeNull();
   expect(findEntry(idx, "One By One - Coldplay")).toBeNull();

@@ -103,18 +103,22 @@ const CREDIT_ROLES = /^\s*(?:(?:music|lyrics|words|melody|text|composed|composer
 /**
  * The artist a message names, if the songbook has songs of theirs, and those songs: every word of
  * the artist's name in the message, one with a word of four letters or more (so "U2" or "Al" alone
- * don't count), the longest name winning. For telling the model what it can sing of theirs.
+ * don't count), the longest name winning. For telling the model what it can sing of theirs; `tunes`
+ * are those it has only the tune of (no words, sung on "la").
  */
-export function artistMentioned(index: SongEntry[], text: string): { artist: string; titles: string[] } | null {
+export function artistMentioned(index: SongEntry[], text: string): { artist: string; titles: string[]; tunes: string[] } | null {
   const m = new Set(words(text));
-  const by = new Map<string, { artist: string; titles: string[] }>();
+  const by = new Map<string, { artist: string; titles: string[]; tunes: string[] }>();
   for (const e of index) {
     if (GENERIC.test(e.artist)) continue;
     const name = artistName(e.artist);
     if (!name.length || !name.some((w) => w.length >= 4) || !name.every((w) => m.has(w))) continue;
     const key = name.join(" ");
-    const g = by.get(key) ?? { artist: e.artist.split(/\s+arr\.?\s+/i)[0], titles: [] };
-    if (g.titles.length < 12) g.titles.push(e.title);
+    const g = by.get(key) ?? { artist: e.artist.split(/\s+arr\.?\s+/i)[0], titles: [], tunes: [] };
+    if (g.titles.length < 12) {
+      g.titles.push(e.title);
+      if (e.instrumental) g.tunes.push(e.title); // only its tune: no words
+    }
     by.set(key, g);
   }
   return [...by.entries()].sort((a, b) => b[0].length - a[0].length)[0]?.[1] ?? null;

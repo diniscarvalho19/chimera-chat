@@ -37,7 +37,7 @@ async function withSongbook(message: string, before = ""): Promise<string> {
   const notes: string[] = [];
   if (song) notes.push(`if you sing it, the songbook has ${songName(song)}${song.voices ? ` (with ${song.voices} choir part${song.voices > 1 ? "s" : ""})` : ""}: use a song-ref block with exactly that title`);
   if (artist)
-    notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"`).join(", ")}. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
+    notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"${artist.tunes.includes(t) ? " (only its tune, no words: sung on la)" : ""}`).join(", ")}. Say which ones you have only the tune of, before singing one. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
   if (CHOIR.test(message) || MAX_VOICES.test(message)) notes.push(`songs in the songbook sung with choir parts (other voices singing with you, each with a face), the fullest first; unless another is asked for, sing one of the first: ${choirSongs(index).map((e) => `${songName(e)} (${e.voices} choir part${e.voices! > 1 ? "s" : ""})`).join(", ")}`);
   // songs on a topic only when the message is about music ("any christmas songs?", not "what time is it")
   const language = languageSongs(index, message);
