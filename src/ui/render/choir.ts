@@ -1,6 +1,7 @@
 /**
  * The other singers of a found song (a choir's alto, tenor, bass, or asked-for harmony), drawn by
- * the head's view into its own canvas, in the space under the head from its bottom-left corner: a
+ * the head's view into its own canvas, in the space under the head from its bottom-left corner (in
+ * rows, wrapping upwards when they don't fit across): a
  * small head each, the same face as the main one, its mouth moving with its own voice (that
  * engine's jaw and lips), its brows, lids and cheeks with its own singing, its name and the word it
  * is singing. Only while such a song plays.
@@ -96,10 +97,12 @@ export class Choir {
     if (!choir || !p || (now >= 0 && now > p.plan.end + 0.3)) return;
     if (!this.ready(dpr, choir.length) || !this.gl) return;
     const gl = this.gl;
-    const top = h - EDGE - CAPTION - H;
+    // as many to a row as fit, wrapping onto rows above: the last row sits on the bottom edge
+    const perRow = Math.max(1, Math.floor((w - 2 * EDGE + GAP) / (W + GAP)));
+    const rows = Math.ceil(choir.length / perRow), rowH = H + CAPTION + GAP;
     choir.forEach((part, i) => {
-      const x = EDGE + i * (W + GAP);
-      if (x + W > w) return; // no room: a narrow screen shows the first ones
+      const x = EDGE + (i % perRow) * (W + GAP);
+      const top = h - EDGE - CAPTION - H - (rows - 1 - Math.floor(i / perRow)) * rowH;
       const head = this.heads[i];
       if (!head || i >= engine.choirSinging) return; // shed by a busy audio thread
       const tele = engine.choirLatest(i);

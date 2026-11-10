@@ -3,7 +3,6 @@ import { useStore } from "./store.ts";
 import { engine } from "../audio/AudioEngine.ts";
 import { Chip, Screen } from "./components/Screen.tsx";
 import { ChatRight } from "./components/ChatPanel.tsx";
-import { bodyLabel } from "./body.ts";
 
 // three.js loads after the engine, with the head
 const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((m) => ({ default: m.AnatomyView3D })));
@@ -20,7 +19,7 @@ function TopBar() {
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="wordmark">Chimera</span>
+        <span className="wordmark">Chimera Chat</span>
         <span className="tagline">A voice grown from a simulated airway</span>
       </div>
       <div className="topbar-right">
@@ -33,7 +32,7 @@ function TopBar() {
             Engine load {Math.round(load * 100)} %
           </span>
         )}
-        <a className="repo-link" href="https://github.com/jamesondh/chimera-vocal-synth" target="_blank" rel="noreferrer" aria-label="Chimera source on GitHub" title="Chimera source on GitHub">
+        <a className="repo-link" href="https://github.com/diniscarvalho19/chimera-chat" target="_blank" rel="noreferrer" aria-label="Chimera Chat source on GitHub" title="Chimera Chat source on GitHub">
           <svg viewBox="0 0 16 16" width="18" height="18" aria-hidden="true">
             <path
               fill="currentColor"
@@ -48,15 +47,12 @@ function TopBar() {
 
 /** The tall left screen: the 3D head facing the viewer, its airway live (pressure, airflow). */
 function LeftScreen() {
-  const body = useStore((s) => s.body);
   const xray = useStore((s) => s.view.xray);
   const setView = useStore((s) => s.setView);
   return (
     <Screen
       className="left"
       focus
-      title="Vocal tract"
-      sub={bodyLabel(body)}
       label="Live vocal tract"
       tools={
         <Chip on={xray} onClick={() => setView({ xray: !xray })} title="Show the tongue, jaw and airway through the face">
