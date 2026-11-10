@@ -112,6 +112,7 @@ export class AudioEngine {
         this.latestAt = performance.now();
         this.latestCreature = null;
         this.load = m.load;
+        this.engineCost = Math.max(this.engineCost, m.load);
         for (const l of this.listeners) l(m);
       } else if (m.type === "ctelemetry") {
         this.latestCreature = m;
@@ -141,12 +142,40 @@ export class AudioEngine {
   }
 
   /** the extra singers (a found song's other sung parts), each its own engine on the same clock */
-  private choirNodes: { node: AudioWorkletNode; latest: TelemetryMessage | null }[] = [];
+  private choirNodes: { node: AudioWorkletNode; gain: GainNode; latest: TelemetryMessage | null }[] = [];
+  /** the most one engine has been seen to cost (of its render budget), the lead's or a singer's */
+  engineCost = 0;
+  private shedAt = 0;
+
+  /**
+   * The audio thread's load: every engine's own render time added up (each measures only its own).
+   * Over 0.9 the thread is about to fall behind (and the output to break up): the last singer goes.
+   */
+  private shed(): void {
+    const total = this.choirNodes.reduce((s, c) => s + (c.latest?.load ?? 0), this.load);
+    const now = performance.now();
+    // a third of a second between drops: the loads (averages over ~50 ms) settle first
+    if (total <= 0.9 || !this.choirNodes.length || now - this.shedAt < 300) return;
+    this.shedAt = now;
+    this.closeSinger(this.choirNodes.pop()!);
+    console.warn(`audio thread at ${Math.round(total * 100)}%: one singer fewer (${this.choirNodes.length} left)`);
+  }
+
+  private closeSinger(c: (typeof this.choirNodes)[number]): void {
+    c.node.port.postMessage({ type: "close" } satisfies ToWorklet);
+    c.node.disconnect();
+    c.gain.disconnect();
+  }
+
+  /** how many extra singers are singing now (fewer than the song's if the thread shed some) */
+  get choirSinging(): number {
+    return this.choirNodes.length;
+  }
 
   /**
    * Sing plans on extra voices, one per plan, each with its own body; all sent in this one task, so
-   * they start on the same render quantum as a plan scheduled with them. Nodes are made on first use
-   * and kept (silent when idle).
+   * they start on the same render quantum as a plan scheduled with them. Nodes are made for the song
+   * and closed a second after its last note (an idle engine costs nearly what a singing one does).
    */
   singChoir(
     parts: (
@@ -157,15 +186,20 @@ export class AudioEngine {
   ): void {
     const ctx = this.ctx;
     if (!ctx || !this.master) return;
+    this.stopChoir();
     while (this.choirNodes.length < parts.length) {
       const node = new AudioWorkletNode(ctx, "chimera", { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions: { module: chimeraModule() } });
       const gain = ctx.createGain();
       gain.gain.value = 0.7; // the lead stays in front
       node.connect(gain).connect(this.master);
-      const voice = { node, latest: null as TelemetryMessage | null };
+      const voice = { node, gain, latest: null as TelemetryMessage | null };
       node.port.onmessage = (e: MessageEvent<FromWorklet>) => {
-        if (e.data.type === "telemetry") voice.latest = e.data;
-        else if (e.data.type === "error") console.error("choir worklet:", e.data.message);
+        if (e.data.type === "telemetry") {
+          if (!this.choirNodes.includes(voice)) return; // closed: its last few messages
+          voice.latest = e.data;
+          this.engineCost = Math.max(this.engineCost, e.data.load);
+          this.shed();
+        } else if (e.data.type === "error") console.error("choir worklet:", e.data.message);
       };
       this.choirNodes.push(voice);
     }
@@ -182,15 +216,16 @@ export class AudioEngine {
         );
       }
     });
+    // a second after the last note (times from now), the singers are done
+    const last = Math.max(0, ...parts.map((p) => ("plan" in p ? p.plan.end : p.stop)));
+    if (parts.length) this.beatTimers.push(window.setTimeout(() => this.stopChoir(), (last + 1) * 1000));
   }
   private beatTimers: number[] = [];
 
+  /** the extra singers stopped and closed (made again for the next song) */
   stopChoir(): void {
     for (const t of this.beatTimers.splice(0)) clearTimeout(t);
-    for (const c of this.choirNodes) {
-      c.node.port.postMessage({ type: "stopSpeech" } satisfies ToWorklet);
-      c.node.port.postMessage({ type: "beat", playing: false } satisfies ToWorklet);
-    }
+    for (const c of this.choirNodes.splice(0)) this.closeSinger(c);
   }
 
   /** an extra singer's latest telemetry (its mouth), or null */

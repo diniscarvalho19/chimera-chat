@@ -1,17 +1,19 @@
 /** Main-thread speech planning: text/IPA → phrases → gestural plan → worklet. */
 import type { BodyMix } from "../wasm/types.ts";
-import { EnglishG2P, type Phrase } from "../wasm/engine.ts";
+import { EnglishG2P, MandarinLexicon, portuguesePhrases, type Phrase } from "../wasm/engine.ts";
 import { tokenizeIpa } from "../wasm/engine.ts";
 import { parseBeat, planPhrases, planSong, type Plan, type Segment } from "../wasm/engine.ts";
 import { songNotes } from "./song.ts";
 import { playBacking, playParts, stopBacking, type ChordSpan } from "./backing.ts";
-import type { PartNote, Song } from "./chatText.ts";
+import { isPortuguese, type PartNote, type Song } from "./chatText.ts";
 import { nearestBody } from "./body.ts";
 import { engine } from "../audio/AudioEngine.ts";
 import type { Gesture } from "../wasm/types.ts";
 import { wordSpans, type WordSpan } from "./words.ts";
 
 export const g2p = new EnglishG2P();
+/** the Mandarin front end's lexicon, loaded when a reply first has Han characters */
+export const zh = new MandarinLexicon();
 
 export interface SpokenPlan {
   plan: Plan;
@@ -157,9 +159,9 @@ export async function singSong(song: Song, body: BodyMix): Promise<SpokenPlan | 
     return l.chords.map((tones, k) => ({ tones, t0: lineAt[i] - T0 + k * span, t1: lineAt[i] - T0 + (k + 1) * span }));
   });
   if (chords.length) chords[chords.length - 1].t1 += beat; // the last chord rings past the last note
-  // as many other singers as the audio thread has room for (each costs about what the lead does);
-  // the rest are heard as "ooh"s in the band
-  const room = Math.max(0, Math.floor(0.85 / Math.max(engine.load, 0.1)) - 1);
+  // as many other singers as the audio thread has room for, each costing the most one engine has
+  // been seen to (the rest are heard as "ooh"s in the band); if that's too many the engine sheds some
+  const room = Math.max(0, Math.floor(0.8 / Math.max(engine.engineCost, 0.1)) - 1);
   // a beatboxer (a cappella) takes the place after the bass: the groove before the inner lines
   const all = song.voices ?? [];
   const beatAt = song.beatbox ? Math.min(all.length, all.findIndex((v) => v.name === "Bass") + 1 || all.length) : -1;
@@ -204,6 +206,7 @@ export async function speakText(text: string, o: { ipa: boolean; body: BodyMix; 
   if (!text.trim()) return null;
   let phrases: Phrase[];
   if (o.ipa) phrases = ipaToPhrases(text);
+  else if (isPortuguese(text)) phrases = portuguesePhrases(text);
   else {
     try {
       await g2p.load();

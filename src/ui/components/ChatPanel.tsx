@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { MOUTH_OPEN, MOUTH_SHUT, useStore } from "../store.ts";
-import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p } from "../speech.ts";
+import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p, zh } from "../speech.ts";
+import { hasHan } from "../../wasm/engine.ts";
 import { Slider } from "./Controls.tsx";
 import { Screen } from "./Screen.tsx";
 import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song } from "../chatText.ts";
 import { artistMentioned, choirSongs, findSong, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
-import { acappella, harmonize } from "../song.ts";
+import { acappella, ensemble, harmonize } from "../song.ts";
 
 /** a message asking for a song without instruments (however it's spelt) */
 const A_CAPPELLA = /\b(a[\s-]?cap+el+a|acap+el+a|no (instruments|band|music)|voices only|just voices|only voices)\b/i;
@@ -13,6 +14,8 @@ import { MOOD, isMood, moodOf, type Mood } from "../mood.ts";
 import { aiInstall, aiPrompt, aiStatus, type AIStatus } from "../chromeAI.ts";
 import { OR_AUTO, orFinishSignIn, orKey, orModels, orPrompt, orSignIn, orSignOut, type OrModel } from "../openRouter.ts";
 
+/** a message asking for as many singers as there can be */
+const MAX_VOICES = /\b((max(imum)?|most|all( the)?|lots of|many|more and more|full|big|huge)\s+(number of\s+)?(voices|singers|choir|cast|ensemble)|ensemble|full cast|whole cast)\b/i;
 /** a message asking for backing singers */
 const HARMONY = /\b(harmon\w*|backing (vocals?|singers?|voices?)|back-?up (vocals?|singers?)|choir|chorus of|other voices|more voices|with voices)\b/i;
 
@@ -35,7 +38,7 @@ async function withSongbook(message: string, before = ""): Promise<string> {
   if (song) notes.push(`if you sing it, the songbook has ${songName(song)}${song.voices ? ` (with ${song.voices} choir part${song.voices > 1 ? "s" : ""})` : ""}: use a song-ref block with exactly that title`);
   if (artist)
     notes.push(`the songbook's songs by ${artist.artist} are: ${artist.titles.map((t) => `"${t}"`).join(", ")}. To sing one of theirs, use a song-ref block with exactly one of these titles; it has no others of theirs, so never name or sing any other song as theirs`);
-  if (CHOIR.test(message)) notes.push(`songs in the songbook sung with choir parts (other voices singing with you, each with a face): ${choirSongs(index).map(songName).join(", ")}`);
+  if (CHOIR.test(message) || MAX_VOICES.test(message)) notes.push(`songs in the songbook sung with choir parts (other voices singing with you, each with a face), the fullest first; unless another is asked for, sing one of the first: ${choirSongs(index).map((e) => `${songName(e)} (${e.voices} choir part${e.voices! > 1 ? "s" : ""})`).join(", ")}`);
   const topic = song || artist ? [] : searchSongs(index, message);
   if (topic.length) notes.push(`songs in the songbook on that: ${topic.map(songName).join(", ")}`);
   if (!notes.length && ABOUT_SONGBOOK.test(message)) notes.push(`your songbook (what you can sing from real scores): ${songbookOverview(index)}`);
@@ -309,21 +312,30 @@ export function ChatRight() {
       const clean = reply.replace(/’/g, "'");
       // songs asked for by name: their scores, from the songbook
       const refs = songRefs(clean);
-      if (refs.length) setStatus(`Finding the music for ${refs.map((r) => `“${r.replace(/\s+[-–—]\s+.*$/, "")}”`).join(" and ")}…`);
+      if (refs.length) setStatus(`Finding the music for ${refs.map((r) => `“${r.split("\n")[0].replace(/\s+[-–—]\s+.*$/, "")}”`).join(" and ")}…`);
       const found = new Map(await Promise.all(refs.map(async (q) => [q, (await findSong(q))?.song ?? null] as const)));
       if (!g2p.loaded) {
         setStatus("Getting the words ready…");
         await g2p.load().catch(() => {}); // the letter-to-sound rules still work
       }
+      if (hasHan(clean) && !zh.loaded) {
+        setStatus("Getting the Chinese words ready…");
+        await zh.load().catch(() => {}); // pinyin still works
+      }
       const { display, songs } = extractSongs(clean, found);
-      // asked for harmony: up to two backing singers on every song that has fewer of its own
+      const cappella = A_CAPPELLA.test(message);
+      // asked for harmony: a score's instrument parts sung over its band; otherwise up to two
+      // backing singers on every song that has fewer of its own
       if (HARMONY.test(message))
-        for (const song of songs) {
+        songs.forEach((song, i) => {
+          if (!cappella && song.parts?.some((p) => !p.vocal)) return void (songs[i] = acappella(song, true));
           const own = song.voices?.length ?? 0;
           if (own < 2) song.voices = [...(song.voices ?? []), ...harmonize(song, 2 - own)];
-        }
+        });
       // asked a cappella: no band; voices sing its instruments' parts
-      if (A_CAPPELLA.test(message)) songs.forEach((song, i) => (songs[i] = acappella(song)));
+      if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song)));
+      // asked for the most voices: every line doubled at the octave
+      if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
       const { text, blocks } = moodBlocks(display, moodOf);
       const msg = push({ role: "assistant", text, shown: 0 });
       sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, lower: text.toLowerCase(), songs };

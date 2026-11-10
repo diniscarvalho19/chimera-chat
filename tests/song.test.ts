@@ -76,10 +76,27 @@ test("a cappella: no band; a bass and a backing voice sing the instruments' lowe
   expect(bass.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([48, 48, 53, 53]);
   expect(backing.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([67, 67, 69, 69]);
   expect(bass.song.lines[0].lyrics).toBe("bom bom bom bom"); // two beats each: long
+  // more voices, not a cappella: the same voices, the band still playing, no beatboxer
+  const more = acappella(tune, true);
+  expect(more.parts).toBe(tune.parts);
+  expect(more.beatbox).toBeUndefined();
+  expect(more.voices!.map((v) => v.name)).toEqual(a.voices!.map((v) => v.name));
   // each sung note on its beat: 0, 2, 4, 6
   const n = songNotes(bass.song, 0);
   expect(n.map((_, i) => n.slice(0, i).reduce((s, x) => s + x.beats + x.rest, 0) + n[i].rest)).toEqual([0, 2, 4, 6]);
   // no parts, only chords (the model's own song): the voices come from them
   const own = acappella(parseSong("Twin-kle twin-kle | C4 C4 G4 G4 | C G"));
   expect(own.voices!.map((v) => v.song.lines.flatMap((l) => l.notes.map((x) => x.midi)))).toEqual([[48, 55], [64, 71]]);
+});
+
+test("the most voices asked for: every line doubled at the octave, across the female/male split", async () => {
+  const { ensemble } = await import("../src/ui/song.ts");
+  const line = (midi: number) => ({ lyrics: "la la", notes: [{ midi, beats: 1 }, { midi: null, beats: 1 }], chords: [[0, 4, 7]] });
+  const song = { bpm: 100, exact: true, lines: [line(64)], voices: [{ name: "Alto", song: { bpm: 100, lines: [line(60)] } }, { name: "Bass", song: { bpm: 100, lines: [line(48)] } }] };
+  const e = ensemble(song);
+  expect(e.voices!.map((v) => v.name)).toEqual(["Alto", "Bass", "Lead", "Alto", "Bass"]); // the score's own first
+  expect(e.voices!.map((v) => v.song.lines[0].notes[0].midi)).toEqual([60, 48, 52, 48, 60]);
+  expect(e.voices![2].song.lines[0].notes[1].midi).toBeNull(); // rests stay rests
+  expect(e.voices![2].song.lines[0].chords).toEqual([]); // a double plays no band
+  expect(e.lines).toBe(song.lines); // the lead itself unchanged
 });

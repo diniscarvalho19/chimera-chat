@@ -1,5 +1,6 @@
 /** A chat song → the notes the engine sings: each line's syllables paired with its notes. */
-import { lyricsToSyllables } from "../wasm/engine.ts";
+import { lyricsToSyllables, lyricsToSyllablesPt } from "../wasm/engine.ts";
+import { italianSyllables } from "./italian.ts";
 import type { SungNote, Syllable } from "../wasm/types.ts";
 
 /** a sung note, and the beats of silence before it (a rest: R in the song) */
@@ -25,14 +26,19 @@ export function sungBeats(s: Syllable, last: boolean): number {
  * small model often writes no rhythm) gets the stress rhythm instead. Each line ends a phrase.
  * Rests take no syllable: their beats go before the next sung note.
  */
+/** lyrics → sung syllables in a song's language */
+export const syllablesFor = (lang: Song["lang"]): ((text: string) => Syllable[]) =>
+  lang === "it" ? italianSyllables : lang === "pt" ? lyricsToSyllablesPt : lyricsToSyllables;
+
 export function songNotes(song: Song, shift: number): RestedNote[] {
+  const syllables = syllablesFor(song.lang);
   let carry = 0; // rests waiting for the next sung note (a line's trailing rests go to the next line)
   return song.lines.flatMap((l, li) => {
     // whole words, not the hyphenated pieces: the dictionary only knows words ("ge-cko" alone is
     // "ge" and "cko", sung by letter rules); it splits the syllables itself
     const lyrics = l.lyrics.replace(/([a-z'])-(?=[a-z])/gi, "$1");
     // the line ends a phrase; a space before the comma, or a last "~," isn't read as a hold
-    let syl = lyricsToSyllables(/[,.!?;:]$/.test(lyrics) ? lyrics : `${lyrics} ,`);
+    let syl = syllables(/[,.!?;:]$/.test(lyrics) ? lyrics : `${lyrics} ,`);
     // a score's line with no vowel to sing ("hm"): hummed, so its notes keep their time
     if (song.exact && !syl.length) syl = lyricsToSyllables("hum ,");
     const restBefore: number[] = [];
@@ -115,7 +121,7 @@ export function harmonize(song: Song, n = 2): { name: string; song: Song }[] {
         return { midi, beats: x.beats };
       }),
     }));
-    const harmony: Song = { bpm: song.bpm, lines, ...(song.exact ? { exact: true } : {}) };
+    const harmony: Song = { bpm: song.bpm, lines, ...(song.exact ? { exact: true } : {}), ...(song.lang ? { lang: song.lang } : {}) };
     singers.push({ name: `Harmony ${s + 1}`, song: harmony });
     above = lines;
   }
@@ -130,9 +136,10 @@ export function harmonize(song: Song, n = 2): { name: string; song: Song }[] {
  * (the model's own) gets them from its chords: the bass on each root, the backing on a chord tone;
  * with neither, harmony under the tune.
  * The song's own sung parts stay first; these are added after them.
+ * With `band` (more voices asked for, not a cappella) the band keeps playing under them, no beatboxer.
  */
 // ponytail: three lines (top, middle and bottom of the accompaniment) and one groove for every song
-export function acappella(song: Song): Song {
+export function acappella(song: Song, band = false): Song {
   let parts: PartNote[] = (song.parts ?? []).filter((p) => !p.vocal);
   if (!parts.length) {
     // from the chords, each spread over its line as the band would play them
@@ -186,5 +193,29 @@ export function acappella(song: Song): Song {
     voice(top, 57, 74, (b) => (b >= 1.5 ? "ooh" : "doo"), "Backing"),
     ...(middle.length >= 4 ? [voice(middle, 52, 64, (b) => (b >= 1.5 ? "ah" : "dah"), "Middle")] : []),
   ];
+  if (band) return { ...song, voices: [...(song.voices ?? []), ...sung] };
   return { ...song, lines, beatbox: true, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...sung] };
+}
+
+/**
+ * The most voices asked for: every line sung by two singers an octave apart, like an ensemble. Each
+ * choir part gets a second singer an octave below (a high part) or above (a low one), so a female
+ * voice doubles a male's and the other way round; the tune gets one an octave below the lead. The
+ * doubles come after the song's own voices, so a busy audio thread hums them first.
+ */
+// ponytail: the lead's double is always an octave down (male); a male lead gets a unison double, pick its octave by the lead's body if that sounds thin
+export function ensemble(song: Song): Song {
+  const octave = (s: Song, by: number): Song => ({
+    ...s,
+    lines: s.lines.map((l) => ({ ...l, chords: [], notes: l.notes.map((n) => (n.midi === null ? n : { ...n, midi: n.midi + by })) })),
+  });
+  const median = (s: Song): number => {
+    const ps = s.lines.flatMap((l) => l.notes.flatMap((n) => (n.midi === null ? [] : [n.midi]))).sort((a, b) => a - b);
+    return ps[ps.length >> 1] ?? 60;
+  };
+  const own = song.voices ?? [];
+  const lead: Song = { bpm: song.bpm, exact: song.exact, lang: song.lang, meter: song.meter, lines: song.lines };
+  // the speech's split into female and male is at A3 (57): the double sits across it
+  const doubles = own.map((v) => ({ name: v.name, song: octave(v.song, median(v.song) >= 57 ? -12 : 12) }));
+  return { ...song, voices: [...own, { name: "Lead", song: octave(lead, -12) }, ...doubles] };
 }

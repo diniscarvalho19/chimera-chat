@@ -8,7 +8,8 @@
  * artist_name, composer_name}]
  * (`mxl` is the score's path in mxl.tar.gz, relative to <pdmx root>). Each is kept only if the
  * browser's converter (src/ui/musicxml.ts) sings at least two lines of it and nine in ten of its
- * words are in the English dictionary (the voice only speaks English). Needs `bun run wasm`.
+ * words are in the English dictionary (the voice only speaks English). Of a song's scores (same
+ * title and artist) the fullest is kept: the most choir parts, then the most viewed. Needs `bun run wasm`.
  */
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
@@ -30,49 +31,70 @@ const out = new URL("../public/songs/", import.meta.url).pathname;
 mkdirSync(out, { recursive: true });
 const candidates: { mxl: string; song_name: string; title: string; artist_name: string; composer_name: string }[] = JSON.parse(readFileSync(candidatesPath, "utf8"));
 const index: { id: string; title: string; artist: string; voices?: number }[] = [];
-const seen = new Set<string>();
 const why = new Map<string, number>();
 const skip = (reason: string) => why.set(reason, (why.get(reason) ?? 0) + 1);
 const tidy = (s: string) => (s === "NA" ? "" : s.trim());
 
+// a song's scores, by title and artist, in the order the first of each appears (the most viewed)
+const songs = new Map<string, typeof candidates>();
 for (const c of candidates) {
-  if (index.length >= max) break;
   const title = tidy(c.song_name) || tidy(c.title), artist = tidy(c.artist_name) || tidy(c.composer_name);
-  const key = `${title}|${artist}`.toLowerCase();
-  if (!title || seen.has(key)) {
-    skip("no title or a repeat");
+  if (!title) {
+    skip("no title");
     continue;
   }
-  const path = join(root, c.mxl);
+  const key = `${title}|${artist}`.toLowerCase();
+  songs.set(key, [...(songs.get(key) ?? []), c]);
+}
+
+/** a score's choir parts, or null if the converter can't sing it */
+async function voicesOf(path: string): Promise<number | null> {
   let bytes: Uint8Array;
   try {
     bytes = readFileSync(path);
   } catch {
     skip("not extracted");
-    continue;
+    return null;
   }
-  let voices = 0;
   try {
     const song = scoreToSong(await scoreXml(bytes));
-    voices = song.voices?.length ?? 0;
     const words = song.lines.flatMap((l) => l.lyrics.toLowerCase().split(/\s+/)).filter((w) => w !== "~" && w);
-    if (song.lines.length < 2) {
-      skip("under two lines");
-      continue;
-    }
-    if (words.filter((w) => english.has(w)).length < 0.9 * words.length) {
-      skip("not English");
-      continue;
-    }
+    if (song.lines.length < 2) return skip("under two lines"), null;
+    if (words.filter((w) => english.has(w)).length < 0.9 * words.length) return skip("not English"), null;
+    return song.voices?.length ?? 0;
   } catch {
     skip("converter failed");
-    continue;
+    return null;
   }
-  seen.add(key);
-  const id = basename(c.mxl, ".mxl").slice(0, 16);
-  copyFileSync(path, join(out, `${id}.mxl`));
-  // voices: how many other sung parts it has (a choir's), for telling the model what it can sing
-  index.push({ id, title, artist, ...(voices ? { voices } : {}) });
 }
+
+// of a song's scores, the fullest (the most choir parts); of those, the most viewed. The song
+// sits where its first score the converter sings is (the most viewed of those)
+const picked: { at: number; c: (typeof candidates)[number]; voices: number }[] = [];
+for (const scores of songs.values()) {
+  let best: (typeof picked)[number] | null = null;
+  for (const c of scores) {
+    const voices = await voicesOf(join(root, c.mxl));
+    if (voices === null) continue;
+    if (!best) best = { at: candidates.indexOf(c), c, voices };
+    else if (voices > best.voices) best = { ...best, c, voices };
+  }
+  if (best) picked.push(best);
+}
+for (const { c, voices } of picked.sort((a, b) => a.at - b.at).slice(0, max)) {
+  const id = basename(c.mxl, ".mxl").slice(0, 16);
+  copyFileSync(join(root, c.mxl), join(out, `${id}.mxl`));
+  // voices: how many other sung parts it has (a choir's), for telling the model what it can sing
+  index.push({ id, title: tidy(c.song_name) || tidy(c.title), artist: tidy(c.artist_name) || tidy(c.composer_name), ...(voices ? { voices } : {}) });
+}
+// songs in other languages (Italian, Portuguese) were added apart from this English pass: kept
+let before: { id: string; lang?: string }[] = [];
+try {
+  before = JSON.parse(readFileSync(join(out, "index.json"), "utf8"));
+} catch {
+  // no songbook yet
+}
+const ids = new Set(index.map((e) => e.id));
+index.push(...before.filter((e) => e.lang && !ids.has(e.id)));
 writeFileSync(join(out, "index.json"), JSON.stringify(index));
 console.log(`${index.length} songs; skipped:`, Object.fromEntries(why));

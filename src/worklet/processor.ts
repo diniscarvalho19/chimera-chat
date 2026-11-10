@@ -41,6 +41,7 @@ class ChimeraProcessor extends AudioWorkletProcessor {
   private readonly x: Exports;
   private readonly h: number;
   private failed = false;
+  private closed = false;
   private telemetryOn = true;
   private blocks = 0;
   private load = 0;
@@ -143,6 +144,9 @@ class ChimeraProcessor extends AudioWorkletProcessor {
       case "stopSpeech":
         x.engine_stop_speech(h);
         break;
+      case "close":
+        this.closed = true;
+        break;
       case "release":
         x.engine_release(h, m.tag);
         break;
@@ -180,6 +184,7 @@ class ChimeraProcessor extends AudioWorkletProcessor {
   }
 
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
+    if (this.closed) return false; // a finished extra singer: off the audio thread
     const out = outputs[0];
     if (!out || out.length === 0) return true;
     const ch0 = out[0];

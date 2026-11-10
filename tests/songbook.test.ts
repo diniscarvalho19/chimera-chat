@@ -18,16 +18,17 @@ test("a song is found by its title, most of it, and the artist settles a tie", (
   expect(findEntry(index, "You Are My Sunshine - Jimmie Davis")?.id).toBe("d");
   expect(findEntry(index, "Hallelujah by Handel")?.id).toBe("c");
   expect(findEntry(index, "Hallelujah")?.id).toBe("b"); // the more popular (first)
+  expect(findEntry(index, "Happy Birthday (traditional)")?.id).toBe("a");
   expect(findEntry(index, "Bohemian Rhapsody - Queen")).toBeNull();
   expect(findEntry(index, "Let It Go - Frozen")).toBeNull(); // not "Let It Snow"
   expect(findEntry(index, "Let It Snow by Dean Martin")?.id).toBe("e"); // a cover: the songbook doesn't know Dean Martin
 });
 
 test("a song asked for by name: listed, then sung if found, said so if not", () => {
-  const reply = "[happy] Here it is!\n\n```song-ref\nYou Are My Sunshine - Jimmie Davis\n```\n\n```song-ref\nNope - Nobody\n```";
-  expect(songRefs(reply)).toEqual(["You Are My Sunshine - Jimmie Davis", "Nope - Nobody"]);
+  const reply = "[happy] Here it is!\n\n```song-ref\nYou Are My Sunshine - Jimmie Davis\n```\n\n```song-ref\nNope - Nobody\nexcerpt\n```";
+  expect(songRefs(reply)).toEqual(["You Are My Sunshine - Jimmie Davis", "Nope - Nobody\nexcerpt"]);
   const song: Song = { bpm: 90, exact: true, lines: [{ lyrics: "you are my sun shine ~", notes: [], chords: [] }] };
-  const { display, songs } = extractSongs(reply, new Map([["You Are My Sunshine - Jimmie Davis", song], ["Nope - Nobody", null]]));
+  const { display, songs } = extractSongs(reply, new Map([["You Are My Sunshine - Jimmie Davis", song], ["Nope - Nobody\nexcerpt", null]]));
   expect(songs).toEqual([song]);
   expect(display).toBe("[happy] Here it is!\n\n♪ you are my sun shine\n\nI couldn't find the music for Nope.");
 });
@@ -84,11 +85,11 @@ test("the songbook searched for the model: a topic, choir songs, the whole in br
     { id: "a", title: "Last Christmas", artist: "Wham!" },
     { id: "b", title: "Drink to me only", artist: "Anonymous", voices: 3 },
     { id: "c", title: "White Christmas", artist: "Irving Berlin" },
-    { id: "d", title: "Amazing Grace", artist: "Misc Praise Songs", voices: 2 },
+    { id: "d", title: "Amazing Grace", artist: "Misc Praise Songs", voices: 5 },
   ];
   expect(searchSongs(idx, "do you know any christmas songs?").map((e) => e.id)).toEqual(["a", "c"]);
   expect(searchSongs(idx, "what songs do you have?")).toEqual([]); // asking about the songbook, not a topic
-  expect(choirSongs(idx).map((e) => e.id)).toEqual(["b", "d"]);
+  expect(choirSongs(idx).map((e) => e.id)).toEqual(["d", "b"]); // the fullest first
   expect(songName(idx[3])).toBe('"Amazing Grace"'); // a generic credit isn't named
   expect(songbookOverview(idx)).toStartWith("4 songs, 2 of them with choir parts.");
 });

@@ -42,8 +42,8 @@ export class Choir {
     this.camera.lookAt(0, 0, 0);
   }
 
-  /** the renderer, made the first time a choir sings and kept, and the heads loading (four: the most a choir has) */
-  private ready(dpr: number): boolean {
+  /** the renderer, made the first time a choir sings and kept, and the heads loading (as many as the choir has, kept) */
+  private ready(dpr: number, n: number): boolean {
     if (this.failed) return false;
     if (!this.gl) {
       try {
@@ -59,10 +59,11 @@ export class Choir {
       this.gl.setPixelRatio(dpr);
       this.gl.setSize(W, H, false);
     }
-    if (!this.heads.length && !this.loading) {
+    if (this.heads.length < n && !this.loading) {
       this.loading = true;
-      loadSkins(this.gl, 4).then(
+      loadSkins(this.gl, n - this.heads.length).then(
         (skins) => {
+          this.loading = false;
           if (this.gone) return;
           for (const skin of skins) {
             // face the camera (the skin turns the head for the main view), centred, a unit tall
@@ -93,14 +94,14 @@ export class Choir {
     const p = currentPlan(), now = planNow(p);
     // the song over (or another one begun): no heads
     if (!choir || !p || (now >= 0 && now > p.plan.end + 0.3)) return;
-    if (!this.ready(dpr) || !this.gl) return;
+    if (!this.ready(dpr, choir.length) || !this.gl) return;
     const gl = this.gl;
     const top = h - EDGE - CAPTION - H;
     choir.forEach((part, i) => {
       const x = EDGE + i * (W + GAP);
       if (x + W > w) return; // no room: a narrow screen shows the first ones
       const head = this.heads[i];
-      if (!head) return;
+      if (!head || i >= engine.choirSinging) return; // shed by a busy audio thread
       const tele = engine.choirLatest(i);
       head.face.update(tele, dt);
       if (tele) head.skin.drive(VoiceModel.articFromArray(tele.t.artic), head.face, 0, 0);

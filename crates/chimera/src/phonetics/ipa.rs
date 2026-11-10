@@ -5,8 +5,8 @@ use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
 
-const VOWEL_CHARS: &str = "iyɨʉɯuɪʏʊeøɘɵɤoəɛœɜɞʌɔæɐaɶɑɒɝɚ";
-const MULTI: [&str; 10] = ["tʃ", "dʒ", "ts", "dz", "pf", "aɪ", "aʊ", "ɔɪ", "eɪ", "oʊ"];
+const VOWEL_CHARS: &str = "iyɨʉɯuɪʏʊeøɘɵɤoəɛœɜɞʌɔæɐaɶɑɒɝɚɿʅ";
+const MULTI: [&str; 14] = ["tʃ", "dʒ", "ts", "dz", "pf", "tɕ", "dʑ", "tʂ", "dʐ", "aɪ", "aʊ", "ɔɪ", "eɪ", "oʊ"];
 const ALIASES: [(&str, &str); 9] = [("t͡ʃ", "tʃ"), ("d͡ʒ", "dʒ"), ("t͡s", "ts"), ("d͡z", "dz"), ("ɡ", "g"), ("ʧ", "tʃ"), ("ʤ", "dʒ"), ("r̥", "r"), ("ɐ̯", "ɐ")];
 
 
@@ -57,6 +57,14 @@ pub fn tokenize_ipa(input: &str) -> Vec<Segment> {
             }
             if ch == ',' || ch == '|' {
                 out.push(Segment { ipa: "_".into(), dur: Some(0.16), ..Default::default() });
+            }
+            i += 1;
+            continue;
+        }
+        // aspiration marks: ʰ aspirated, ˭ unaspirated (the front end's call; see Segment::aspirated)
+        if ch == 'ʰ' || ch == '˭' {
+            if let Some(last) = out.last_mut() {
+                last.aspirated = Some(ch == 'ʰ');
             }
             i += 1;
             continue;

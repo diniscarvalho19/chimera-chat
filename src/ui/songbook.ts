@@ -12,6 +12,8 @@ export interface SongEntry {
   artist: string;
   /** how many other sung parts it has (a choir's), sung with it by voices of their own */
   voices?: number;
+  /** the words' language, when not English */
+  lang?: Song["lang"];
 }
 
 const words = (s: string): string[] =>
@@ -35,7 +37,9 @@ const STOP = new Set(["the", "a", "an", "by", "song", "from", "of"]);
 export function findEntry(index: SongEntry[], query: string): SongEntry | null {
   // "title - artist", else "title by artist" at its last "by" (a title may have one: "One by One")
   const m = query.match(/^(.*?)\s+[-–—]\s+(.*)$/) ?? query.match(/^(.*)\s+by\s+(.*)$/i);
-  const [titlePart, artistPart] = m ? [m[1], m[2]] : [query, ""];
+  const [rawTitle, artistPart] = m ? [m[1], m[2]] : [query, ""];
+  // "Still Alive (Portal)": a bracketed aside names where it's from, not the title
+  const titlePart = rawTitle.replace(/\s*[([].*?[)\]]/g, "") || rawTitle;
   const q = words(titlePart), by = new Set(words(artistPart));
   if (!q.length) return null;
   const known = by.size > 0 && index.some((e) => !GENERIC.test(e.artist) && artistName(e.artist).length > 0 && artistName(e.artist).every((w) => by.has(w)));
@@ -122,8 +126,9 @@ export function searchSongs(index: SongEntry[], message: string, n = 15): SongEn
 /** words of asking about the songbook itself, not a topic */
 const BROWSE = new Set("list songbook music musics artists artist bands band singers singer choir choirs harmony harmonies voices parts know have sing songs song".split(" "));
 
-/** songs with several singing parts (a choir's), most popular first */
-export const choirSongs = (index: SongEntry[], n = 20): SongEntry[] => index.filter((e) => (e.voices ?? 0) > 0).slice(0, n);
+/** songs with several singing parts (a choir's), the fullest first, then the most popular */
+export const choirSongs = (index: SongEntry[], n = 20): SongEntry[] =>
+  index.filter((e) => (e.voices ?? 0) > 0).sort((a, b) => b.voices! - a.voices!).slice(0, n);
 
 /** the songbook in a few words: its size, its artists with the most songs, its best-known songs */
 export function songbookOverview(index: SongEntry[]): string {
@@ -138,14 +143,20 @@ const base = () => `${import.meta.env?.BASE_URL ?? "/"}songs/`;
 /** the songbook's list (fetched once, the first time it's needed) */
 export const songbook = (): Promise<SongEntry[]> => (index ??= fetch(`${base()}index.json`).then((r) => (r.ok ? r.json() : [])));
 
-/** the song asked for, sung from its score; null if the songbook hasn't got it */
+/**
+ * The song a song-ref block asks for, sung from its score; null if the songbook hasn't got it. Its
+ * first line names the song; a line "excerpt" after it sings only its first 4 bars (a song the model
+ * sings unasked), else it's sung whole.
+ */
 export async function findSong(query: string): Promise<{ entry: SongEntry; song: Song } | null> {
-  const entry = findEntry(await songbook(), query);
+  const [name, ...rest] = query.trim().split("\n");
+  const maxBars = rest.some((l) => /^\s*excerpt\s*$/i.test(l)) ? 4 : Infinity;
+  const entry = findEntry(await songbook(), name);
   if (!entry) return null;
   const r = await fetch(`${base()}${entry.id}.mxl`);
   if (!r.ok) return null;
   try {
-    return { entry, song: scoreToSong(await scoreXml(new Uint8Array(await r.arrayBuffer()))) };
+    return { entry, song: scoreToSong(await scoreXml(new Uint8Array(await r.arrayBuffer())), { maxBars, lang: entry.lang }) };
   } catch (e) {
     console.warn("songbook:", entry.title, e);
     return null;

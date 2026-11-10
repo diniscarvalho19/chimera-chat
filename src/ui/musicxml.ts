@@ -8,8 +8,8 @@
  *    the most lyrics; the other parts and voices are the accompaniment;
  *  - repeats and 1st/2nd endings are written out, each pass singing its own verse line; D.C., D.S.,
  *    To Coda and Fine are ignored (it sings straight through);
- *  - it starts where the singing starts and stops after `maxBars` sung bars (a chat sings an
- *    excerpt), at the end of a line;
+ *  - it starts where the singing starts and sings to the end (or for `maxBars` sung bars),
+ *    ending at the end of a line;
  *  - tied notes are one note, a chord sings its top note, grace and cue notes are skipped, a note
  *    with no lyric holds the previous vowel (~);
  *  - each word is joined back up ("to-ge-ther") and fitted to its notes by the dictionary: fewer
@@ -17,7 +17,7 @@
  *  - the melody moves by octaves into the voice's range; tempo is the first one given.
  */
 import { chordTones, type PartNote, type Song, type SongLine } from "./chatText.ts";
-import { lyricsToSyllables } from "../wasm/engine.ts";
+import { syllablesFor } from "./song.ts";
 
 const STEP: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const KIND: Record<string, string> = {
@@ -147,11 +147,13 @@ function walk(part: string): { notes: Note[]; harmony: { t: number; bar: number;
 /**
  * The score's sung melody as a chat song, and its other parts as the accompaniment. `maxBars` caps
  * the excerpt (sung bars, from the first lyric); `count` gives a word's syllables as the voice will
- * sing it (the engine's dictionary).
+ * sing it (in the score's `lang`: the engine's dictionary for English).
  */
-export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: string) => number } = {}): Song {
-  const maxBars = o.maxBars ?? 16;
-  const count = o.count ?? ((w: string) => lyricsToSyllables(w).filter((s) => !s.melisma).length);
+export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: string) => number; lang?: Song["lang"] } = {}): Song {
+  const maxBars = o.maxBars ?? Infinity;
+  const sylls = syllablesFor(o.lang);
+  const count = o.count ?? ((w: string) => sylls(w).filter((s) => !s.melisma).length);
+  const lang = o.lang ? { lang: o.lang } : {};
   const names = new Map([...xml.matchAll(/<score-part\s[^>]*id="([^"]+)"[^>]*>([\s\S]*?)<\/score-part>/g)].map((m) => [m[1], unescape(tag(m[2], "part-name") ?? "").replace(/\s+/g, " ").toLowerCase()]));
   const parts = [...xml.matchAll(/<part(\s[^>]*)?>([\s\S]*?)<\/part>/g)].map((m) => ({ id: attrsOf(m[1] ?? "").id, xml: m[2], lyrics: m[2].match(/<lyric/g)?.length ?? 0 }));
   // the melody: the first part (scores list it on top) with nearly the most lyrics; a choir's
@@ -187,13 +189,13 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
   // where the excerpt starts (a word begun before it is left out) to where it ends
   const voices: { name: string; song: Song; id: string }[] = [];
   for (const p of parts) {
-    if (p === main || p.lyrics < 0.3 * main.lyrics || voices.length >= 3) continue;
+    if (p === main || p.lyrics < 0.3 * main.lyrics) continue;
     const ns = walk(p.xml).notes;
     const win = within(sungEvents(ns, lyricVoice(ns)), t0, t1);
     const lines = win.some((e) => e.text) ? toLines(win, 0, count, []) : [];
     if (!lines.some((l) => l.lyrics.trim())) continue;
     const name = names.get(p.id) || `Voice ${voices.length + 2}`;
-    voices.push({ id: p.id, name: name[0].toUpperCase() + name.slice(1), song: { bpm, exact: true, lines } });
+    voices.push({ id: p.id, name: name[0].toUpperCase() + name.slice(1), song: { bpm, exact: true, lines, ...lang } });
   }
 
   // the accompaniment: every other part, and the sung part's other voices, under the excerpt
@@ -228,6 +230,7 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
   return {
     bpm,
     exact: true,
+    ...lang,
     lines: toLines(sung, shift, count, chordsAt),
     ...(under.length ? { parts: under.slice(0, 3000) } : {}),
     ...(voices.length ? { voices: voices.map(({ name, song }) => ({ name, song })) } : {}),
@@ -381,12 +384,12 @@ function toLines(evs: Ev[], shift: number, count: (w: string) => number, chordsA
     if (line?.lyrics && (phraseEnd || e.bar - lineBar >= 4)) close(e.bar - 1);
     phraseEnd = /[,.;:!?]["')]*$/.test(pieces[pieces.length - 1]);
     const ln = open(e.bar);
-    const word = pieces.join("").replace(/[^A-Za-z']/g, "");
+    const word = pieces.join("").replace(/[^\p{L}']/gu, ""); // any letters: ã, é, Hangul, Han
     const n = word ? count(word) : 0;
     let sung: string[];
     if (!word) sung = [];
     else if (n >= 1 && n <= notes.length) sung = [word, ...Array<string>(notes.length - n).fill("~")];
-    else sung = notes.map((x, k) => (x.text?.replace(/[^A-Za-z']/g, "") || (k ? "~" : "la")));
+    else sung = notes.map((x, k) => (x.text?.replace(/[^\p{L}']/gu, "") || (k ? "~" : "la")));
     if (!sung.length) {
       ln.notes.push({ midi: null, beats: notes.reduce((b, x) => b + x.beats, 0) }); // a lyric with no letters: silent, in time
       continue;

@@ -8,7 +8,12 @@ copy it back unless it serves the chat or the face.
 ## Map
 
 - `crates/chimera/`: the engine (no I/O). `crates/chimera-wasm/`: the browser's C ABI. Both are
-  upstream's, unchanged.
+  upstream's `t3/real-voice-hill-climb` (PR #41) with PR #34 merged (language front ends: Korean,
+  Mandarin, pinyin), unchanged otherwise; in the merge a voiceless affricate keeps #41's folds unless
+  its front end sets `aspirated`. Also hugoriosbrito/chimera-pt-br's Brazilian Portuguese
+  (`phonetics/portuguese.rs`, nasal vowels in the planner), as a front end asked for by name
+  (`lyricsToSyllablesPt`, `g2pPtPhrases`). Italian is sung by `src/ui/italian.ts`. Both are a song's
+  `lang` ("it", "pt"): the router picks a front end by script, and theirs is English's.
 - `src/ui/chromeAI.ts`: the model (Chrome's on-device AI): status, install with progress, prompt.
   `src/voicePrompt.ts`: its system prompt.
 - `src/ui/components/ChatPanel.tsx`: the chat, the paragraph queue, the reveal synced to speech.

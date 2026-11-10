@@ -63,8 +63,55 @@ pub fn expand(ipa: &str) -> Option<&'static [&'static str]> {
         "eɪ" => &["e", "i"],
         "oʊ" => &["o", "u"],
         "ɚ" => &["ɝ"],
+        "ɐ̃w̃" => &["ɐ̃", "ũ"],
+        // rising diphthongs: a short close glide into the main vowel (Mandarin's medials: 话 ua,
+        // 天 iɛ, 学 yɛ), written as one nucleus so the glide sings on the beat, inside the note
+        "ia" => &["i", "a"],
+        "iɛ" => &["i", "ɛ"],
+        "iɑ" => &["i", "ɑ"],
+        "iʊ" => &["i", "ʊ"],
+        "ua" => &["u", "a"],
+        "uo" => &["u", "o"],
+        "uɑ" => &["u", "ɑ"],
+        "uə" => &["u", "ə"],
+        "yɛ" => &["y", "ɛ"],
+        "uɔ" => &["u", "ɔ"],
+        // a central start, Mandarin's ou ([əʊ], where English [oʊ] starts nearly at [u])
+        "əʊ" => &["ə", "ʊ"],
+        // triphthongs: a glide into a falling diphthong (Mandarin iao, iou, uai, uei)
+        "iaʊ" => &["i", "a", "ʊ"],
+        "iəʊ" => &["i", "ə", "ʊ"],
+        "uaɪ" => &["u", "a", "ɪ"],
+        "ueɪ" => &["u", "e", "i"],
         _ => return None,
     })
+}
+
+/// A rising nucleus (a rising diphthong or a triphthong): its first part is a short glide.
+pub fn is_rising(ipa: &str) -> bool {
+    matches!(ipa, "ia" | "iɛ" | "iɑ" | "iʊ" | "ua" | "uo" | "uɑ" | "uə" | "yɛ" | "uɔ" | "iaʊ" | "iəʊ" | "uaɪ" | "ueɪ")
+}
+
+/// A rising nucleus's on-glide (its first part), sung short at the note's start.
+pub fn onglide(ipa: &str) -> Option<&'static str> {
+    if is_rising(ipa) { expand(ipa).map(|p| p[0]) } else { None }
+}
+
+/// The vowel a sung note holds: a falling diphthong's first part, a rising nucleus's second, else
+/// the vowel itself.
+pub fn held_vowel(ipa: &str) -> &str {
+    match expand(ipa) {
+        Some(p) if p.len() >= 2 => p[usize::from(is_rising(ipa))],
+        _ => ipa,
+    }
+}
+
+/// What a held note glides off to at its end: a falling diphthong's (or a triphthong's) last part.
+pub fn offglide(ipa: &str) -> Option<&'static str> {
+    match expand(ipa) {
+        Some(p) if p.len() == 3 || (p.len() == 2 && !is_rising(ipa)) => Some(p[p.len() - 1]),
+        _ => None,
+    }
 }
 
 /// The two vowel targets of a diphthong ("aɪ" → ("a", "ɪ")), or None.
@@ -76,6 +123,7 @@ pub fn diphthong_parts(ipa: &str) -> Option<(&'static str, &'static str)> {
 }
 
 pub fn is_vowel(ipa: &str, body: BodyMix) -> bool {
+    let ipa = nasal_base(ipa).unwrap_or(ipa);
     let t = vowel_table();
     body.weights().iter().any(|(b, w)| *w > 0.0 && t.get(b.as_str()).is_some_and(|t| t.contains_key(ipa))) || expand(ipa).is_some()
 }
@@ -83,6 +131,7 @@ pub fn is_vowel(ipa: &str, body: BodyMix) -> bool {
 /// The calibrated articulation of a vowel for a body: between presets, the presets' calibrated
 /// articulations blended by the body's weights.
 pub fn vowel_artic(ipa: &str, body: BodyMix) -> Option<ArticPatch> {
+    let ipa = nasal_base(ipa).unwrap_or(ipa);
     if let Some(b) = body.preset() {
         return preset_vowel_artic(ipa, b);
     }
@@ -94,6 +143,13 @@ pub fn vowel_artic(ipa: &str, body: BodyMix) -> Option<ArticPatch> {
         }
     }
     Some(ArticPatch::blend(&parts))
+}
+
+fn nasal_base(ipa: &str) -> Option<&'static str> {
+    match ipa {
+        "ã" | "ɐ̃" => Some("ɐ"), "ẽ" => Some("e"), "ĩ" => Some("i"),
+        "õ" => Some("o"), "ũ" => Some("u"), _ => None,
+    }
 }
 
 fn preset_vowel_artic(ipa: &str, body: BodyName) -> Option<ArticPatch> {
@@ -181,6 +237,8 @@ struct Seg<'a> {
     def: Option<PhonemeDef>,
     vowel: Option<ArticPatch>,
     glide_from: bool,
+    aspirated: Option<bool>,
+    vot: Option<f64>,
 }
 
 #[derive(Clone, Copy)]
@@ -205,12 +263,19 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     for (si, s) in input.iter().enumerate() {
         if let Some(parts) = expand(&s.ipa) {
             let base = durs[si];
+            // shares of the duration: a falling diphthong 55/45, a rising one 30/70, a triphthong 25/45/30
+            let shares: &[f64] = match (parts.len(), is_rising(&s.ipa)) {
+                (2, false) => &[0.55, 0.45],
+                (2, true) => &[0.3, 0.7],
+                (3, _) => &[0.25, 0.45, 0.3],
+                _ => &[1.0],
+            };
             for (i, p) in parts.iter().enumerate() {
-                let dur = if parts.len() > 1 { base * (if i == 0 { 0.55 } else { 0.45 }) } else { base };
-                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0 });
+                let dur = base * shares.get(i).copied().unwrap_or(1.0);
+                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0, aspirated: None, vot: None });
             }
         } else {
-            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false });
+            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false, aspirated: s.aspirated, vot: s.vot });
         }
     }
     for s in segs.iter_mut() {
@@ -267,6 +332,9 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         let r_in = js_max(0.03, 0.75 * (times[i].t0 - prev)) + 0.01;
         let r_out = js_max(0.03, 0.4 * (next - times[i].t1)) + 0.01;
         gestures.push(Gesture::new(times[i].t0, times[i].t1, r_in, r_out, 1.0, artic_targets(segs[i].vowel.as_ref().unwrap())).label(segs[i].ipa));
+        if nasal_base(segs[i].ipa).is_some() {
+            gestures.push(Gesture::new(times[i].t0 - 0.02, times[i].t1, 0.04, 0.04, 4.0, one(ArticKey::Velum, 0.45)).label("nasal-vowel"));
+        }
     }
     // utterance-initial/final consonants: lend them the nearest vowel's body posture
     // ---- consonant gestures
@@ -341,15 +409,16 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         } else if def.glottal == Some(Glottal::Stop) {
             gestures.push(Gesture::new(t0, t1, 0.012, 0.015, 8.0, one(ControlKey::CLOSURE, 1.0)).label("ʔ"));
         } else if def.voicing == Voicing::Voiceless {
-            if def.manner == Manner::Affricate {
+            if def.manner == Manner::Affricate && s.aspirated.is_none() {
                 // apart from the closure on, and together again as the frication ends: in an
                 // affricate the frication is the voice onset time, with no [h] after it, and the
-                // vowel keeps its planned length
+                // vowel keeps its planned length (a front end that says otherwise is heard below)
                 gestures.push(affricate_folds(t0 + 0.15 * dur, t1).label("aspiration"));
-            } else if def.manner == Manner::Stop {
-                // aspirated when syllable-initial before a vowel and not after /s/ (English-like)
-                let aspirated = next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s");
-                let vot = if aspirated { 0.05 / rate } else { 0.012 };
+            } else if def.manner == Manner::Stop || def.manner == Manner::Affricate {
+                // as the front end says; by default English's rule: aspirated when syllable-initial
+                // before a vowel and not after /s/
+                let aspirated = s.aspirated.unwrap_or_else(|| next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s"));
+                let vot = if aspirated { s.vot.unwrap_or(0.05) / rate } else { 0.012 };
                 gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration"));
             } else {
                 gestures.push(Gesture::new(t0 - 0.015, t1 + 0.005, 0.03, 0.03, 6.0, one(ControlKey::ABDUCTION, 0.3)).label("voiceless"));

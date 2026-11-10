@@ -20,6 +20,21 @@ export function blocks(text: string): Block[] {
   return out;
 }
 
+/**
+ * Whether a paragraph is Portuguese, so the voice reads it with Portuguese's rules: a quarter of its
+ * words are common Portuguese ones, or it has an ã, õ or ç and at least one.
+ */
+// ponytail: a word list, not language identification; Spanish may pass for Portuguese
+export function isPortuguese(text: string): boolean {
+  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
+  if (!words.length) return false;
+  const pt = words.filter((w) => PT_WORDS.has(w)).length;
+  return pt / words.length >= 0.25 || (pt > 0 && /[ãõç]/i.test(text));
+}
+const PT_WORDS = new Set(
+  "não sim você vocês eu tu ele ela nós eles elas meu minha seu sua nosso nossa é são está estão estou foi ser estar ter tem tenho tinha fazer faz posso pode quero que de do da dos das em no na nos nas um uma uns umas com para por pra pelo pela mas ou se como mais muito muita bem também já ainda quando onde porque isso isto esse essa este esta aqui ali então olá obrigado obrigada tudo nada coisa vou vai vamos ao aos às".split(" "),
+);
+
 /** What the voice says of a paragraph: code blocks dropped, markdown marks stripped. */
 export function toSpeech(md: string): string {
   return md
@@ -51,6 +66,9 @@ export interface Song {
   voices?: { name: string; song: Song }[];
   /** sung a cappella: a beatboxer keeps the beat (a voice of its own, after the bass) */
   beatbox?: boolean;
+  /** the words' language, when not English (one the script doesn't tell): Italian is sung by its
+   *  spelling (src/ui/italian.ts), Brazilian Portuguese by the engine's rules */
+  lang?: "it" | "pt";
   /** a found song's bar: its length in beats, and how far into one its first note is (a pickup) */
   meter?: { beats: number; at: number };
 }
@@ -95,13 +113,18 @@ export function chordTones(name: string): number[] | null {
 const isNoteRun = (s: string) => /^\s*(?:(?:[A-Ga-g][#b]?-?\d|[Rr](?:est)?)(?:\/[\d.]+)?\s*)+$/.test(s);
 
 export function parseSong(src: string): Song {
-  let bpm = 100;
+  let bpm = 100, lang: Song["lang"];
   const lines: SongLine[] = [];
   for (const raw of src.split("\n")) {
     const line = raw.trim();
     const b = /^bpm\s*:?\s*(\d+(?:\.\d+)?)$/i.exec(line);
     if (b) {
       bpm = Math.min(240, Math.max(40, Number(b[1])));
+      continue;
+    }
+    const l = /^lang\s*:?\s*(it|italian|pt|pt-br|portuguese)$/i.exec(line);
+    if (l) {
+      lang = /^it/i.test(l[1]) ? "it" : "pt";
       continue;
     }
     let [lyricsPart, notesPart, chordsPart = ""] = line.replace(/^♪\s*/, "").split("|");
@@ -132,7 +155,7 @@ export function parseSong(src: string): Song {
     if (wordless) lyrics = notes.filter((n) => n.midi !== null).map(() => "la").join(" ");
     if (lyrics) lines.push({ lyrics, notes, chords });
   }
-  return { bpm, lines };
+  return { bpm, lines, ...(lang ? { lang } : {}) };
 }
 
 /** What the chat shows for a song: its lyrics as words (the syllable hyphens are for the notes), a ♪ per phrase */
@@ -170,7 +193,7 @@ export function extractSongs(text: string, found: ReadonlyMap<string, Song | nul
     .replace(SONG_BLOCK, (_, ref: string | undefined, body: string) => {
       if (byName && !ref) return "";
       const song = ref ? found.get(body.trim()) : parseSong(body);
-      if (ref && !song) return `\n\nI couldn't find the music for ${body.trim().replace(/\s+-\s+.*$/, "")}.\n\n`;
+      if (ref && !song) return `\n\nI couldn't find the music for ${body.trim().split("\n")[0].replace(/\s+-\s+.*$/, "")}.\n\n`;
       if (!song) return "";
       if (!song.lines.length) return "";
       songs.push(song);
