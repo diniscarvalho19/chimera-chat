@@ -110,6 +110,8 @@ export function ChatRight() {
   const start = useStore((s) => s.start);
   const setSource = useStore((s) => s.setSource);
   const setMood = useStore((s) => s.setMood);
+  const overloaded = useStore((s) => s.overloaded);
+  const rebuilt = useStore((s) => s.rebuilt);
   const [msgs, setMsgs] = useState<Msg[]>([]);
   // the model: Chrome's on-device AI, installed on first use
   const [ai, setAi] = useState<AIStatus | "checking" | "failed">("checking");
@@ -304,6 +306,12 @@ export function ChatRight() {
     stopSpeaking();
     finish();
   };
+  // the audio was rebuilt at 32 kHz (the device couldn't keep up): the reply being said is gone
+  useEffect(() => {
+    if (!rebuilt) return;
+    if (sp.current) stop();
+    push({ role: "error", text: "This device couldn't keep up, so the voice now runs lighter (32 kHz, a little duller). Ask again to hear the rest.", shown: Infinity });
+  }, [rebuilt]);
   const skip = () => {
     if (!sp.current) return;
     stopSpeaking();
@@ -443,6 +451,11 @@ export function ChatRight() {
               </div>
             )}
           </div>
+          {overloaded && (
+            <p className="hint" role="status">
+              This device can't keep up, so the voice breaks up or goes silent. Plugging in, or closing other tabs, may help.
+            </p>
+          )}
           {picked.length > 1 && (
             <div className="song-pick" role="group" aria-label="Your songs">
               <p>

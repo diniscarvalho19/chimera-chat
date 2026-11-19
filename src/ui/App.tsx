@@ -9,6 +9,7 @@ const AnatomyView3D = lazy(() => import("./components/AnatomyView3D.tsx").then((
 
 function TopBar() {
   const started = useStore((s) => s.started);
+  const light = useStore((s) => s.lightAudio);
   const [load, setLoad] = useState(0);
   useEffect(() => {
     const id = setInterval(() => setLoad(engine.load), 500);
@@ -22,8 +23,8 @@ function TopBar() {
       </div>
       <div className="topbar-right">
         {started && (
-          <span className="load" title="Share of the audio thread's time budget used by the simulation">
-            Engine load {Math.round(load * 100)} %
+          <span className="load" title={"Share of the audio thread's time budget used by the simulation" + (light ? ". This device couldn't keep up at 48 kHz, so the voice runs at 32 kHz: lighter, a little duller. Reload to try 48 kHz again." : "")}>
+            Engine load {Math.round(load * 100)} %{light && " · 32 kHz"}
           </span>
         )}
         <a className="repo-link" href="https://github.com/diniscarvalho19/chimera-chat" target="_blank" rel="noreferrer" aria-label="Chimera Chat source on GitHub" title="Chimera Chat source on GitHub">
