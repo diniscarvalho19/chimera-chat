@@ -25,6 +25,8 @@ copy it back unless it serves the chat or the face.
   A score's other parts are the band (`playParts` in `src/ui/backing.ts`); its other sung parts are
   sung by extra worklet nodes (`AudioEngine.singChoir`), drawn as small heads under the main one
   (`src/ui/render/choir.ts`).
+- `src/ui/songfiles.ts`: the visitor's own song files (MusicXML, UltraStar `.txt`, karaoke MIDI), read
+  in the browser and never uploaded; a medley sings each one's chorus (`chorus`).
 - `src/ui/components/AnatomyView3D.tsx`, `src/ui/render/`: the head (3D, facing the viewer).
 - `src/wasm/`: the UI's facade over the engine. `src/worklet/`: the AudioWorklet.
 

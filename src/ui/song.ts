@@ -5,7 +5,7 @@ import type { SungNote, Syllable } from "../wasm/types.ts";
 
 /** a sung note, and the beats of silence before it (a rest: R in the song) */
 export type RestedNote = SungNote & { rest: number; line: number };
-import type { Song } from "./chatText.ts";
+import type { PartNote, Song } from "./chatText.ts";
 
 /**
  * A syllable's length when the model gave the line no rhythm of its own: stressed syllables long,
@@ -71,10 +71,69 @@ export function songNotes(song: Song, shift: number): RestedNote[] {
   });
 }
 
-/** A song sung a cappella (asked for): no band, only its own sung parts; with `beat` (the score had
- *  drums, or a beatbox was asked for), a beatboxer keeps the beat. No voices are added. */
+/**
+ * A song sung a cappella (asked for): no band. The voices take its instruments' parts: a bass on
+ * the lowest note sounding at each moment ("bom", "bum", "dum"), a backing voice on the highest ("doo",
+ * "ooh" on a long one) and a middle voice on the one between ("dah", "ah"), each moved by octaves
+ * into a singer's range; and, with `beat` (the score had drums, or a beatbox was asked for), a
+ * beatboxer keeps the beat. A song with chords and no parts
+ * (the model's own) gets them from its chords: the bass on each root, the backing on a chord tone;
+ * with neither, it's sung alone (no harmony is made up).
+ * The song's own sung parts stay first; these are added after them.
+ */
+// ponytail: three lines (top, middle and bottom of the accompaniment) and one groove for every song
 export function acappella(song: Song, beat = !!song.drums): Song {
-  return { ...song, lines: song.lines.map((l) => ({ ...l, chords: [] })), beatbox: beat, parts: (song.parts ?? []).filter((p) => p.vocal) };
+  let parts: PartNote[] = (song.parts ?? []).filter((p) => !p.vocal);
+  if (!parts.length) {
+    // from the chords, each spread over its line as the band would play them
+    let t = 0;
+    for (const l of song.lines) {
+      const len = l.notes.reduce((s, x) => s + x.beats, 0);
+      l.chords.forEach((c, k) => {
+        const t0 = t + (k * len) / l.chords.length, beats = len / l.chords.length;
+        parts.push({ midi: 36 + c[0], t: t0, beats, vocal: false }, { midi: 60 + c[Math.min(1, c.length - 1)], t: t0, beats, vocal: false });
+      });
+      t += len;
+    }
+  }
+  const lines = song.lines.map((l) => ({ ...l, chords: [] }));
+  // nothing to take the voices from (no instruments, no chords): sung alone
+  if (!parts.length) return { ...song, lines, beatbox: beat, parts: (song.parts ?? []).filter((p) => p.vocal) };
+  // the lowest and the highest note at each onset, each line one note at a time
+  const onsets = [...new Set(parts.map((p) => p.t))].sort((a, b) => a - b);
+  const line = (pick: (ns: PartNote[]) => PartNote | null): PartNote[] => onsets.flatMap((t) => pick(parts.filter((p) => Math.abs(p.t - t) < 1e-6)) ?? []);
+  const bass = line((ns) => ns.reduce((a, b) => (b.midi < a.midi ? b : a)));
+  const top = line((ns) => ns.reduce((a, b) => (b.midi > a.midi ? b : a)));
+  // the middle of three or more (two have no middle: that moment it rests)
+  const middle = line((ns) => (ns.length < 3 ? null : [...ns].sort((a, b) => a.midi - b.midi)[ns.length >> 1]));
+  const voice = (ns: PartNote[], lo: number, hi: number, sound: (beats: number, i: number) => string, name: string) => {
+    const mid = [...ns].sort((a, b) => a.midi - b.midi)[ns.length >> 1].midi;
+    const shift = mid < lo ? 12 * Math.ceil((lo - mid) / 12) : mid > hi ? -12 * Math.ceil((mid - hi) / 12) : 0;
+    // each note until the next one starts (a held chord is one note), rests between; lines of up to four bars
+    const out: Song["lines"] = [];
+    let cur: Song["lines"][number] = { lyrics: "", notes: [], chords: [] }, at = 0, start = 0;
+    ns.forEach((n, i) => {
+      const end = Math.min(n.t + n.beats, ns[i + 1]?.t ?? Infinity);
+      if (n.t > at + 1e-6) cur.notes.push({ midi: null, beats: n.t - at });
+      if (cur.lyrics && n.t - start >= 16) {
+        out.push(cur);
+        cur = { lyrics: "", notes: [], chords: [] };
+        start = n.t;
+      }
+      if (!cur.lyrics) start = n.t;
+      cur.notes.push({ midi: n.midi + shift, beats: end - n.t });
+      cur.lyrics += (cur.lyrics ? " " : "") + sound(end - n.t, i);
+      at = end;
+    });
+    if (cur.lyrics) out.push(cur);
+    return { name, song: { bpm: song.bpm, exact: true, lines: out } };
+  };
+  const sung = [
+    voice(bass, 45, 55, (b, i) => (b >= 1.5 ? "bom" : i % 2 ? "dum" : "bum"), "Bass"),
+    voice(top, 57, 74, (b) => (b >= 1.5 ? "ooh" : "doo"), "Backing"),
+    ...(middle.length >= 4 ? [voice(middle, 52, 64, (b) => (b >= 1.5 ? "ah" : "dah"), "Middle")] : []),
+  ];
+  return { ...song, lines, beatbox: beat, parts: (song.parts ?? []).filter((p) => p.vocal), voices: [...(song.voices ?? []), ...sung] };
 }
 
 /**

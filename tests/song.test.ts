@@ -39,17 +39,39 @@ test("rests take no syllable: their beats sit before the next sung note, across 
   expect(n.map((x) => [x.midi, x.rest])).toEqual([[64, 0.5], [67, 2]]);
 });
 
-test("a cappella: no band, no voices added; a beatboxer only where the score had drums or one is asked for", async () => {
+test("a cappella: no band; a bass and a backing voice sing the instruments' lowest and highest notes, in range, in time", async () => {
   const { acappella } = await import("../src/ui/song.ts");
   const tune = parseSong("Twin-kle twin-kle lit-tle star | C5 C5 G5 G5 A5 A5 G5/2 | C F C");
-  tune.parts = [{ midi: 36, t: 0, beats: 2, vocal: false }, { midi: 64, t: 0, beats: 2, vocal: true }];
+  tune.exact = true;
+  // a piano: a low C and a chord over it each two beats, the chord changing
+  tune.parts = [0, 2, 4, 6].flatMap((t) => [
+    { midi: t < 4 ? 36 : 41, t, beats: 2, vocal: false },
+    { midi: t < 4 ? 64 : 65, t, beats: 2, vocal: false },
+    { midi: t < 4 ? 67 : 69, t, beats: 2, vocal: false },
+  ]);
   const a = acappella(tune);
-  expect(a.parts).toEqual([{ midi: 64, t: 0, beats: 2, vocal: true }]); // the score's own sung part stays
-  expect(a.voices).toBeUndefined();
-  expect(a.lines.every((l) => l.chords.length === 0)).toBe(true);
+  expect(a.parts).toEqual([]);
+  // a beatboxer only where the score had drums (or one is asked for)
   expect(a.beatbox).toBe(false);
   expect(acappella({ ...tune, drums: true }).beatbox).toBe(true);
   expect(acappella(tune, true).beatbox).toBe(true);
+  expect(a.lines.every((l) => l.chords.length === 0)).toBe(true);
+  const [bass, backing] = a.voices!;
+  expect(bass.name).toBe("Bass");
+  // the low notes, an octave up into a bass's range; the chord's top note as it is
+  expect(bass.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([48, 48, 53, 53]);
+  expect(backing.song.lines.flatMap((l) => l.notes.map((n) => n.midi))).toEqual([67, 67, 69, 69]);
+  expect(bass.song.lines[0].lyrics).toBe("bom bom bom bom"); // two beats each: long
+  // each sung note on its beat: 0, 2, 4, 6
+  const n = songNotes(bass.song, 0);
+  expect(n.map((_, i) => n.slice(0, i).reduce((s, x) => s + x.beats + x.rest, 0) + n[i].rest)).toEqual([0, 2, 4, 6]);
+  // no parts, only chords (the model's own song): the voices come from them
+  const own = acappella(parseSong("Twin-kle twin-kle | C4 C4 G4 G4 | C G"));
+  expect(own.voices!.map((v) => v.song.lines.flatMap((l) => l.notes.map((x) => x.midi)))).toEqual([[48, 55], [64, 71]]);
+  // neither (a score that is only its tune): sung alone, no harmony made up
+  const bare = parseSong("Twin-kle twin-kle | C4 C4 G4 G4");
+  bare.lines[0].chords = [];
+  expect(acappella(bare).voices).toBeUndefined();
 });
 
 test("the most voices asked for: every line doubled at the octave, across the female/male split", async () => {

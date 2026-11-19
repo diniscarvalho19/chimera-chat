@@ -3,7 +3,8 @@ import { MOUTH_OPEN, MOUTH_SHUT, useStore } from "../store.ts";
 import { speakText, singSong, stopSpeaking, currentPlan, planNow, g2p, zh } from "../speech.ts";
 import { hasHan } from "../../wasm/engine.ts";
 import { Screen } from "./Screen.tsx";
-import { extractSongs, moodBlocks, songRefs, toSpeech, type MoodBlock, type Song, type VoiceChange } from "../chatText.ts";
+import { extractSongs, moodBlocks, songDisplay, songRefs, toSpeech, type MoodBlock, type Song, type VoiceChange } from "../chatText.ts";
+import { chorus, SONG_FILES, songFromFile } from "../songfiles.ts";
 import { defaultF0 } from "../body.ts";
 import { DEFAULT_SOURCE } from "../../wasm/engine.ts";
 import { artistMentioned, choirSongs, findSong, languageSongs, searchSongs, songbook, songbookOverview, songMentioned, songName } from "../songbook.ts";
@@ -311,6 +312,47 @@ export function ChatRight() {
     void next();
   };
 
+  /** the reply (its words, and its ♪ paragraphs' songs, in order) said and sung paragraph by paragraph */
+  const perform = (display: string, songs: Song[]) => {
+    const { text, blocks, voiceAfter } = moodBlocks(display, moodOf);
+    const msg = push({ role: "assistant", text, shown: 0 });
+    sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, text, lower: text.toLowerCase(), songs, voiceAfter };
+    setTalking(true);
+    void next();
+  };
+
+  // the visitor's own song files: one is sung; several wait for "sing all" or "medley"
+  const files = useRef<HTMLInputElement>(null);
+  const [picked, setPicked] = useState<{ title: string; song: Song }[]>([]);
+  const addFiles = async (list: FileList | null) => {
+    if (!list?.length) return;
+    if (!g2p.loaded) await g2p.load().catch(() => {}); // the words' syllables need the dictionary
+    const got: { title: string; song: Song }[] = [];
+    for (const f of list) {
+      try {
+        got.push(await songFromFile(f));
+      } catch (e) {
+        push({ role: "error", text: `I couldn't read ${f.name}: ${(e as Error).message}.`, shown: Infinity });
+      }
+    }
+    if (got.length === 1) void singFiles(got, false);
+    else if (got.length) setPicked(got);
+  };
+  /** all of them one after another, or a medley: each one's chorus, straight into the next */
+  const singFiles = async (list: { title: string; song: Song }[], medley: boolean) => {
+    setPicked([]);
+    stop();
+    follow.current = true;
+    const names = list.map((x) => x.title);
+    const said = list.length === 1 ? `Sing “${names[0]}”` : `${medley ? "A medley of" : "Sing"} ${names.slice(0, -1).map((n) => `“${n}”`).join(", ")} and “${names.at(-1)}”`;
+    push({ role: "user", text: said, shown: said.length });
+    await start();
+    const err = useStore.getState().startError;
+    if (err) return void push({ role: "error", text: `Audio could not start: ${err}`, shown: Infinity });
+    const songs = list.map((x) => (medley ? chorus(x.song, x.title) : x.song));
+    perform(songs.map(songDisplay).join("\n\n"), songs);
+  };
+
   const send = async () => {
     const message = input.trim();
     if (!message || busy || !ready) return;
@@ -349,11 +391,7 @@ export function ChatRight() {
       if (cappella) songs.forEach((song, i) => (songs[i] = acappella(song, !!song.drums || /\bbeat ?box/i.test(message))));
       // asked for the most voices: every line doubled at the octave
       if (MAX_VOICES.test(message)) songs.forEach((song, i) => (songs[i] = ensemble(song)));
-      const { text, blocks, voiceAfter } = moodBlocks(display, moodOf);
-      const msg = push({ role: "assistant", text, shown: 0 });
-      sp.current = { msg, blocks, bi: -1, planId: -1, matched: 0, cursor: 0, text, lower: text.toLowerCase(), songs, voiceAfter };
-      setTalking(true);
-      void next();
+      perform(display, songs);
     } catch (e) {
       const err = String((e as Error).message ?? e);
       push({ role: "error", text: err, shown: Infinity });
@@ -388,7 +426,12 @@ export function ChatRight() {
                 }}
               />
             )}
-            {ready && !msgs.length && !busy && <p className="hint">Chimera waits. Ask it anything, or ask it to sing a song by name.</p>}
+            {ready && !msgs.length && !busy && (
+              <>
+                <p className="hint">Chimera waits. Ask it anything, or ask it to sing a song by name.</p>
+                <SongSources />
+              </>
+            )}
             {msgs.map((m, i) => (
               <div key={i} className={`chat-msg chat-${m.role}`}>
                 {m.text.slice(0, m.shown)}
@@ -400,6 +443,24 @@ export function ChatRight() {
               </div>
             )}
           </div>
+          {picked.length > 1 && (
+            <div className="song-pick" role="group" aria-label="Your songs">
+              <p>
+                {picked.length} songs: {picked.map((x) => x.title).join(", ")}
+              </p>
+              <div className="song-pick-actions">
+                <button className="primary" onClick={() => void singFiles(picked, false)}>
+                  Sing all
+                </button>
+                <button className="ghost" onClick={() => void singFiles(picked, true)} title="Each song's chorus, one straight into the next">
+                  Medley
+                </button>
+                <button className="ghost" onClick={() => setPicked([])}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
           <p className="sr-only" aria-live="polite">
             {heard}
           </p>
@@ -444,6 +505,18 @@ export function ChatRight() {
                 {cloud && <option value={SIGN_OUT}>Sign out of OpenRouter</option>}
               </select>
               <span className="bar-gap" />
+            <IconButton icon="song" label="Sing your own song files (MusicXML, UltraStar, karaoke MIDI)" onClick={() => files.current?.click()} />
+            <input
+              ref={files}
+              type="file"
+              accept={SONG_FILES}
+              multiple
+              hidden
+              onChange={(e) => {
+                void addFiles(e.currentTarget.files);
+                e.currentTarget.value = ""; // the same files again later still fire
+              }}
+            />
             {SpeechRec && <IconButton icon="mic" label={rec ? "Stop listening" : "Speak"} onClick={listen} disabled={!ready} pressed={!!rec} />}
             {talking && (
               <>
@@ -494,11 +567,23 @@ function AiSetup(props: { status: AIStatus | "checking" | "failed"; progress: nu
   );
 }
 
+/** where to find song files of your own (they stay in your browser: nothing is uploaded) */
+function SongSources() {
+  return (
+    <p className="hint song-sources">
+      Or bring your own songs with the note button: MusicXML from <a href="https://musescore.com/sheetmusic" target="_blank" rel="noreferrer">MuseScore</a> or the{" "}
+      <a href="https://www.cpdl.org" target="_blank" rel="noreferrer">Choral Public Domain Library</a>, UltraStar karaoke from{" "}
+      <a href="https://usdb.animux.de" target="_blank" rel="noreferrer">USDB</a>, or a karaoke MIDI. Several at once can be a medley.
+    </p>
+  );
+}
+
 /** the speaking rate, over the mood's and the voice tag's */
 const RATE = 1.1;
 
 const ICONS = {
   send: "M12 19V5M5.5 11.5 12 5l6.5 6.5",
+  song: "M9 18V5l11-2v13M9 18a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm11-2a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",
   mic: "M12 3a3 3 0 0 0-3 3v5a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3ZM5 11a7 7 0 0 0 14 0M12 18v3M8 21h8",
   stop: "M6 6h12v12H6Z",
   skip: "M5 5l10 7-10 7ZM18 5v14",

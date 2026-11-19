@@ -84,7 +84,7 @@ interface Note {
 }
 
 /** one sounding note or rest of the sung voice, in play order */
-interface Ev {
+export interface Ev {
   t: number;
   midi: number | null;
   beats: number;
@@ -244,6 +244,32 @@ export function scoreToSong(xml: string, o: { maxBars?: number; count?: (word: s
     ...(voices.length ? { voices: voices.map(({ name, song }) => ({ name, song })) } : {}),
     ...(/<unpitched[\s/>]/.test(xml) ? { drums: true } : {}),
     meter: { beats: beatsPerBar, at: t0 - (barStarts[sung[0].bar] ?? t0) },
+  };
+}
+
+/**
+ * A tune from another format (UltraStar, karaoke MIDI) as a chat song, the way a score's is made:
+ * from its first lyric, into the voice's range, its words onto its notes. `parts` (beats from the
+ * tune's own time 0) are the band, from where the singing starts.
+ */
+export function eventsToSong(evs: Ev[], bpm: number, o: { parts?: PartNote[]; drums?: boolean } = {}): Song {
+  const sylls = syllablesFor(undefined);
+  const count = (w: string) => sylls(w).filter((x) => !x.melisma).length;
+  const first = evs.findIndex((e) => e.text);
+  if (first < 0) throw new Error("it has no words to sing");
+  const sung = evs.slice(first);
+  while (sung.length && sung[sung.length - 1].midi === null) sung.pop();
+  const t0 = sung[0].t;
+  const pitches = sung.flatMap((e) => (e.midi === null ? [] : [e.midi])).sort((a, b) => a - b);
+  const shift = 12 * Math.round((66 - pitches[pitches.length >> 1]) / 12);
+  const parts = (o.parts ?? []).filter((p) => p.t >= t0 - 1e-6).map((p) => ({ ...p, t: p.t - t0 }));
+  return {
+    bpm: Math.min(200, Math.max(40, bpm)),
+    exact: true,
+    lines: toLines(sung, shift, count, []),
+    ...(parts.length ? { parts: parts.slice(0, 3000) } : {}),
+    ...(o.drums ? { drums: true } : {}),
+    meter: { beats: 4, at: t0 % 4 },
   };
 }
 

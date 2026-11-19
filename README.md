@@ -28,9 +28,12 @@ CHIMERA (play, speak, sing, beatbox, bestiary, duet, CLI, docs, research tools) 
   CC0 MuseScore scores ([PDMX](https://github.com/pnlong/PDMX)), converted in the browser: the
   tune with its words (or on "la" when it has none), the score's other parts as the band, its
   other sung parts by a choir of small heads under the main one, each on its own audio thread.
-  Asked a cappella, the band drops out and only the song's own singers sing (a beatboxer
-  joins where the score had drums, or when asked). The app searches the songbook for what you ask and tells the model what it has.
+  Asked a cappella, voices take the band's parts: a bass, a backing and middle voice, and a
+  beatboxer where the score had drums; a song with no band is sung alone. The app searches the songbook for what you ask and tells the model what it has.
   `src/ui/songbook.ts`, `src/ui/musicxml.ts`, `src/ui/backing.ts`, `tools/build-songbook.ts`.
+- **Your own songs.** The note button takes song files from your computer (MusicXML, UltraStar
+  karaoke `.txt`, karaoke MIDI), several at once: sung one after another, or as a medley of their
+  choruses. They're read in your browser and never uploaded. `src/ui/songfiles.ts`.
 - **Languages.** Besides English, it speaks and sings Brazilian Portuguese (from
   [@hugoriosbrito](https://github.com/hugoriosbrito)'s fork,
   [chimera-pt-br](https://github.com/hugoriosbrito/chimera-pt-br)), and sings Italian.

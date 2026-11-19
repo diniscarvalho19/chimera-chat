@@ -1488,3 +1488,38 @@ button.primary {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+
+/* the visitor's own songs: several wait for "sing all" or "medley" */
+.song-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--rule);
+}
+
+.song-pick p {
+  flex: 1 1 16em;
+  margin: 0;
+  font-family: var(--read);
+  font-style: italic;
+  font-size: 16px;
+  letter-spacing: normal;
+  color: var(--ink-dim);
+}
+
+.song-pick-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.song-sources a {
+  color: var(--ink);
+  text-decoration-color: var(--ink-faint);
+  text-underline-offset: 3px;
+}
+
+.song-sources a:hover {
+  text-decoration-color: var(--ink);
+}
