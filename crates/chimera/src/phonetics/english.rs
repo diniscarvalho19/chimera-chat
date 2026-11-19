@@ -3,7 +3,8 @@
 //! breaks and intonation.
 
 use super::syllables::WordSource;
-use super::{Intonation, Phrase, Segment};
+use super::{Intonation, Segment};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 fn arpa(base: &str) -> Option<&'static str> {
@@ -78,6 +79,17 @@ fn reduce_vowel(ipa: &str) -> Option<&'static str> {
         "ʌ" | "æ" | "ɑ" | "ɛ" | "ɔ" | "u" | "ʊ" => "ə",
         _ => return None,
     })
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Phrase {
+    pub segments: Vec<Segment>,
+    pub intonation: Intonation,
+    /// pause after the phrase (s)
+    pub pause: f64,
+    /// the words said, one per word end in `segments`
+    pub words: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default)]

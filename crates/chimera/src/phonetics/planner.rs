@@ -17,6 +17,22 @@ use std::sync::OnceLock;
 
 /// label of the end-of-breath-group abduction (a live note can drop it when the next one starts)
 pub const EXHALE_LABEL: &str = "exhale";
+/// The end of a sung phrase on a vowel or sonorant (s): the folds are fully apart this long after
+/// the last segment's end, having parted over `LET_GO_OPENING` before that; the breath stays on
+/// for `LET_GO_BREATH` after the end. Trained singers' notes fall from -3 to -20 dB in about 50 ms
+/// and stop about 90 ms after -3 dB (8,095 releases in VocalSet and GTSinger).
+const LET_GO_OPEN_AT: f64 = 0.06;
+const LET_GO_OPENING: f64 = 0.15;
+const LET_GO_BREATH: f64 = 0.015;
+/// the opening's gesture strength: low enough that the folds follow its ramp (the voice takes a
+/// gesture's glottal opening in full from a weight of 2, which a strength of 6 reaches at a third
+/// of its activation, about 39 % of the way along the cosine ramp's time)
+const LET_GO_STRENGTH: f64 = 2.0;
+/// The shortest final note (its vowel and the sonorants that close it, s) the folds let go of
+/// this way. The opening starts `LET_GO_OPENING - LET_GO_OPEN_AT` (90 ms) before
+/// the phrase's end; on a shorter note it would start before the note has sounded and the whole
+/// note comes out quiet and breathy. Under twice that lead the phrase ends as it did before.
+const LET_GO_ROOM: f64 = 2.0 * (LET_GO_OPENING - LET_GO_OPEN_AT);
 
 /// when a sung phrase's breath reaches full drive, after the plan start (its first segment starts at 0.06)
 const BREATH_SUNG_AT: f64 = 0.06;
@@ -63,7 +79,6 @@ pub fn expand(ipa: &str) -> Option<&'static [&'static str]> {
         "eɪ" => &["e", "i"],
         "oʊ" => &["o", "u"],
         "ɚ" => &["ɝ"],
-        "ɐ̃w̃" => &["ɐ̃", "ũ"],
         // rising diphthongs: a short close glide into the main vowel (Mandarin's medials: 话 ua,
         // 天 iɛ, 学 yɛ), written as one nucleus so the glide sings on the beat, inside the note
         "ia" => &["i", "a"],
@@ -75,7 +90,24 @@ pub fn expand(ipa: &str) -> Option<&'static [&'static str]> {
         "uɑ" => &["u", "ɑ"],
         "uə" => &["u", "ə"],
         "yɛ" => &["y", "ɛ"],
+        // Mandarin's er: a central (er4: open) start, the r-colouring arriving in the held vowel
+        "əɝ" => &["ə", "ɝ"],
+        "aɝ" => &["a", "ɝ"],
         "uɔ" => &["u", "ɔ"],
+        // Mandarin's own back u (Zee & Lee 2001: F2 ~660, English /u/'s is ~1000) as the medial glide:
+        // the same compounds with `u̠` (vowel_data.rs), beside the ones above, which stay as they were
+        "u̠a" => &["u̠", "a"],
+        "u̠ɔ" => &["u̠", "ɔ"],
+        "u̠ɑ" => &["u̠", "ɑ"],
+        "u̠ə" => &["u̠", "ə"],
+        "u̠aɪ" => &["u̠", "a", "ɪ"],
+        "u̠eɪ" => &["u̠", "e", "i"],
+        // and Mandarin's ʊ (ong, and the off-glide of ao ou iao iou, Zee & Lee: F2 ~730 where English /ʊ/ has ~1120)
+        "iʊ̠" => &["i", "ʊ̠"],
+        "aʊ̠" => &["a", "ʊ̠"],
+        "əʊ̠" => &["ə", "ʊ̠"],
+        "iaʊ̠" => &["i", "a", "ʊ̠"],
+        "iəʊ̠" => &["i", "ə", "ʊ̠"],
         // a central start, Mandarin's ou ([əʊ], where English [oʊ] starts nearly at [u])
         "əʊ" => &["ə", "ʊ"],
         // triphthongs: a glide into a falling diphthong (Mandarin iao, iou, uai, uei)
@@ -89,7 +121,7 @@ pub fn expand(ipa: &str) -> Option<&'static [&'static str]> {
 
 /// A rising nucleus (a rising diphthong or a triphthong): its first part is a short glide.
 pub fn is_rising(ipa: &str) -> bool {
-    matches!(ipa, "ia" | "iɛ" | "iɑ" | "iʊ" | "ua" | "uo" | "uɑ" | "uə" | "yɛ" | "uɔ" | "iaʊ" | "iəʊ" | "uaɪ" | "ueɪ")
+    matches!(ipa, "ia" | "iɛ" | "iɑ" | "iʊ" | "ua" | "uo" | "uɑ" | "uə" | "yɛ" | "uɔ" | "əɝ" | "aɝ" | "iaʊ" | "iəʊ" | "uaɪ" | "ueɪ" | "u̠a" | "u̠ɔ" | "u̠ɑ" | "u̠ə" | "u̠aɪ" | "u̠eɪ" | "iʊ̠" | "iaʊ̠" | "iəʊ̠")
 }
 
 /// A rising nucleus's on-glide (its first part), sung short at the note's start.
@@ -114,16 +146,17 @@ pub fn offglide(ipa: &str) -> Option<&'static str> {
     }
 }
 
-/// The two vowel targets of a diphthong ("aɪ" → ("a", "ɪ")), or None.
+/// The two vowel targets of a falling diphthong ("aɪ" → ("a", "ɪ"): held, then glided to), or None.
+/// Rising diphthongs (Mandarin's "ua") and triphthongs aren't pairs of this kind: see [`onglide`],
+/// [`held_vowel`] and [`offglide`].
 pub fn diphthong_parts(ipa: &str) -> Option<(&'static str, &'static str)> {
     match expand(ipa) {
-        Some(p) if p.len() == 2 => Some((p[0], p[1])),
+        Some(p) if p.len() == 2 && !is_rising(ipa) => Some((p[0], p[1])),
         _ => None,
     }
 }
 
 pub fn is_vowel(ipa: &str, body: BodyMix) -> bool {
-    let ipa = nasal_base(ipa).unwrap_or(ipa);
     let t = vowel_table();
     body.weights().iter().any(|(b, w)| *w > 0.0 && t.get(b.as_str()).is_some_and(|t| t.contains_key(ipa))) || expand(ipa).is_some()
 }
@@ -131,7 +164,6 @@ pub fn is_vowel(ipa: &str, body: BodyMix) -> bool {
 /// The calibrated articulation of a vowel for a body: between presets, the presets' calibrated
 /// articulations blended by the body's weights.
 pub fn vowel_artic(ipa: &str, body: BodyMix) -> Option<ArticPatch> {
-    let ipa = nasal_base(ipa).unwrap_or(ipa);
     if let Some(b) = body.preset() {
         return preset_vowel_artic(ipa, b);
     }
@@ -145,13 +177,6 @@ pub fn vowel_artic(ipa: &str, body: BodyMix) -> Option<ArticPatch> {
     Some(ArticPatch::blend(&parts))
 }
 
-fn nasal_base(ipa: &str) -> Option<&'static str> {
-    match ipa {
-        "ã" | "ɐ̃" => Some("ɐ"), "ẽ" => Some("e"), "ĩ" => Some("i"),
-        "õ" => Some("o"), "ũ" => Some("u"), _ => None,
-    }
-}
-
 fn preset_vowel_artic(ipa: &str, body: BodyName) -> Option<ArticPatch> {
     let t = vowel_table();
     let v = t.get(body.as_str()).and_then(|b| b.get(ipa)).or_else(|| t.get("male").and_then(|m| m.get(ipa)))?;
@@ -162,8 +187,10 @@ fn preset_vowel_artic(ipa: &str, body: BodyName) -> Option<ArticPatch> {
         }
     }
     // a rhotic's tip is raised and curled back, not resting behind the teeth: without its
-    // calibrated position the tip stayed down and /ɝ/'s F3 sat ~15–20 % high (weakly rhotic)
-    if v.artic.get(ArticKey::TtCurl).unwrap_or(0.0) > 0.05 {
+    // calibrated position the tip stayed down and /ɝ/'s F3 sat ~15–20 % high (weakly rhotic). The
+    // apical vowels are made with the tongue tip, at the place of the sibilant before them (ʅ
+    // curled, ɿ not): their tip is part of the vowel too
+    if v.artic.get(ArticKey::TtCurl).unwrap_or(0.0) > 0.05 || ipa == "ɿ" {
         if let Some(x) = v.artic.get(ArticKey::TtX) {
             out.set(ArticKey::TtX, x);
         }
@@ -239,7 +266,50 @@ struct Seg<'a> {
     glide_from: bool,
     aspirated: Option<bool>,
     vot: Option<f64>,
+    nasalized: Option<bool>,
+    palatalized: Option<bool>,
+    breathy: Option<bool>,
+    /// a glide off the vowel before it, reached over this long (s): see `Segment::glide`
+    glide: Option<f64>,
 }
+
+/// glottal abduction of breathy voice: /ɦ/'s, a gap the folds still vibrate across
+const BREATHY_ABDUCTION: f64 = 0.1;
+/// how long past its release a breathy-voiced stop's folds stay apart (s), at most to the end of
+/// the next segment
+const BREATHY_RELEASE: f64 = 0.08;
+
+/// A trill's strikes, `TRILL_HZ` a second: the share of each cycle spent at the place, the
+/// ramps (s), the articulator speed, and how far (cm) the tongue is pulled back between strikes.
+/// The tongue is too slow (13 Hz) to strike 26 times a second and reopen: at 26 Hz it hovered
+/// near the ridge with the voicing all but gone; and above speed 6 it overshot and bounced.
+const TRILL_HZ: f64 = 20.0;
+const TRILL_STRIKE: f64 = 0.45;
+const TRILL_RAMP: f64 = 0.004;
+const TRILL_SPEED: f64 = 3.5;
+const TRILL_OPEN: f64 = 1.6;
+
+/// where a trill's articulator is pulled back to between strikes: away from the place by
+/// `TRILL_OPEN` (cm) for the tongue, by an open lip gap for the lips
+fn trill_open(closed: &ArticPatch) -> ArticPatch {
+    let mut open = ArticPatch::default();
+    for (k, v) in closed.iter() {
+        match k {
+            ArticKey::TtY | ArticKey::TbY => {
+                open.set(k, v - TRILL_OPEN);
+            }
+            ArticKey::LipAp => {
+                open.set(k, v + 0.4);
+            }
+            _ => {}
+        }
+    }
+    open
+}
+
+/// velum port area (cm²) of a nasalized vowel, and the ramps of its lowering and raising (s)
+const NASAL_VOWEL_PORT: f64 = 0.3;
+const NASAL_VOWEL_RAMP: f64 = 0.04;
 
 #[derive(Clone, Copy)]
 struct Span {
@@ -272,10 +342,10 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             };
             for (i, p) in parts.iter().enumerate() {
                 let dur = base * shares.get(i).copied().unwrap_or(1.0);
-                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0, aspirated: None, vot: None });
+                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0, aspirated: None, vot: None, nasalized: s.nasalized, palatalized: None, breathy: s.breathy, glide: None });
             }
         } else {
-            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false, aspirated: s.aspirated, vot: s.vot });
+            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false, aspirated: s.aspirated, vot: s.vot, nasalized: s.nasalized, palatalized: s.palatalized, breathy: s.breathy, glide: s.glide });
         }
     }
     for s in segs.iter_mut() {
@@ -329,12 +399,18 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         // vowel-to-vowel through the consonant (Öhman): the previous vowel lets go early in the gap
         // and the next one's target ramps in over most of it, so the tongue body is already near
         // the next vowel at the release and the transitions carry the consonant's place
-        let r_in = js_max(0.03, 0.75 * (times[i].t0 - prev)) + 0.01;
-        let r_out = js_max(0.03, 0.4 * (next - times[i].t1)) + 0.01;
-        gestures.push(Gesture::new(times[i].t0, times[i].t1, r_in, r_out, 1.0, artic_targets(segs[i].vowel.as_ref().unwrap())).label(segs[i].ipa));
-        if nasal_base(segs[i].ipa).is_some() {
-            gestures.push(Gesture::new(times[i].t0 - 0.02, times[i].t1, 0.04, 0.04, 4.0, one(ArticKey::Velum, 0.45)).label("nasal-vowel"));
+        let mut r_in = js_max(0.03, 0.75 * (times[i].t0 - prev)) + 0.01;
+        let mut r_out = js_max(0.03, 0.4 * (next - times[i].t1)) + 0.01;
+        // a glide off the vowel right before it (`Segment::glide`): it comes in over its given time
+        // and that vowel lets go over the glide's own length, so the tongue is on its way from the
+        // start of the one ramp to the end of the other and holds neither target in between
+        if let Some(g) = segs[i].glide.filter(|_| i > 0 && segs[i - 1].vowel.is_some()) {
+            r_in = js_max(0.01, g);
         }
+        if i + 1 < segs.len() && segs[i + 1].vowel.is_some() && segs[i + 1].glide.is_some() {
+            r_out = js_max(0.01, times[i + 1].t1 - times[i + 1].t0);
+        }
+        gestures.push(Gesture::new(times[i].t0, times[i].t1, r_in, r_out, 1.0, artic_targets(segs[i].vowel.as_ref().unwrap())).label(segs[i].ipa));
     }
     // utterance-initial/final consonants: lend them the nearest vowel's body posture
     // ---- consonant gestures
@@ -348,6 +424,18 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             stress: if s.vowel.is_some() { Some(s.stress.unwrap_or(0)) } else { None },
             kind: if s.vowel.is_some() { "vowel".to_string() } else { s.def.map_or("?", |d| d.manner.as_str()).to_string() },
         });
+        if s.vowel.is_some() && !s.glide_from {
+            // what a vowel's marks hold for the whole vowel, through a diphthong's glide
+            let end = times[(i + 1..segs.len()).take_while(|&j| segs[j].glide_from).last().unwrap_or(i)].t1;
+            if s.nasalized == Some(true) {
+                // nasalized: the velum is down
+                gestures.push(Gesture::new(t0, end, NASAL_VOWEL_RAMP, NASAL_VOWEL_RAMP, 4.0, one(ArticKey::Velum, NASAL_VOWEL_PORT)).label("velum"));
+            }
+            if s.breathy == Some(true) {
+                // breathy: the folds part-open, as for /ɦ/
+                gestures.push(Gesture::new(t0, end, 0.03, 0.03, 5.0, one(ControlKey::ABDUCTION, BREATHY_ABDUCTION)).label("breathy"));
+            }
+        }
         let Some(def) = s.def.as_ref() else { continue };
         let next_vowel = i < segs.len() - 1 && segs[i + 1].vowel.is_some();
         let prev_seg = if i > 0 { Some(&segs[i - 1]) } else { None };
@@ -364,12 +452,20 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             Manner::Nasal => add_oral(&def.targets, t0 + js_min(nasal_closure_delay(def.place), js_max(0.0, dur - 0.03)), t1, 1.55, def.ipa),
             Manner::Tap => add_oral(&def.targets, t0, t1, 2.8, def.ipa),
             Manner::Trill => {
-                // driven trill: rapid alternation of near-closure and release at ~26 Hz
-                let n = js_max(2.0, js_round(dur * 26.0));
+                // driven trill: the articulator strikes the place and is pulled back between
+                // strikes, so the voice carries on through it. Each strike is its own short gesture
+                // with tight ramps: with a stop's 30 ms ramp-in and 18 ms ramp-out the strikes
+                // overlapped into one held near-closure and the voice stopped for ~90 ms (Spanish
+                // "perro" sounded wrong; tests/trill.rs)
+                let n = js_max(2.0, js_round(dur * TRILL_HZ));
                 let mut k = 0.0;
                 while k < n {
                     let a = t0 + (k / n) * dur;
-                    add_oral(&def.targets, a, a + 0.35 / 26.0, 3.2, def.ipa);
+                    let b = a + TRILL_STRIKE * dur / n;
+                    gestures.push(Gesture::new(a, b, TRILL_RAMP, TRILL_RAMP, 40.0, artic_targets(&def.targets)).speed(TRILL_SPEED).release_hold(TRILL_RAMP).label(def.ipa));
+                    if k + 1.0 < n {
+                        gestures.push(Gesture::new(b + 2.0 * TRILL_RAMP, a + dur / n - TRILL_RAMP, TRILL_RAMP, TRILL_RAMP, 40.0, artic_targets(&trill_open(&def.targets))).speed(TRILL_SPEED).label(def.ipa));
+                    }
                     k += 1.0;
                 }
             }
@@ -400,6 +496,7 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         }
         // phonation
         let k2 = 1.0; // abduction is body-scaled in the voice
+        let mut voiced_again = t1; // when the folds are back, after an aspirated release
         if def.glottal == Some(Glottal::Open) {
             // the folds close 10 ms before the span's end: with the lungs' port fixed, /h/ is 4-5 dB louder and MFA
             // reads it about that much longer than the speakers' (hill-climb log, experiment 32)
@@ -409,17 +506,29 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         } else if def.glottal == Some(Glottal::Stop) {
             gestures.push(Gesture::new(t0, t1, 0.012, 0.015, 8.0, one(ControlKey::CLOSURE, 1.0)).label("ʔ"));
         } else if def.voicing == Voicing::Voiceless {
-            if def.manner == Manner::Affricate && s.aspirated.is_none() {
+            if def.manner == Manner::Affricate && s.aspirated.is_none() && s.vot.is_none() {
                 // apart from the closure on, and together again as the frication ends: in an
                 // affricate the frication is the voice onset time, with no [h] after it, and the
-                // vowel keeps its planned length (a front end that says otherwise is heard below)
-                gestures.push(affricate_folds(t0 + 0.15 * dur, t1).label("aspiration"));
+                // vowel keeps its planned length. A front end that sets `aspirated` or `vot`
+                // (Mandarin's aspirated affricates) gets the stop's gesture below instead.
+                let g = affricate_folds(t0 + 0.15 * dur, t1).label("aspiration");
+                voiced_again = g.end();
+                gestures.push(g);
             } else if def.manner == Manner::Stop || def.manner == Manner::Affricate {
                 // as the front end says; by default English's rule: aspirated when syllable-initial
                 // before a vowel and not after /s/
                 let aspirated = s.aspirated.unwrap_or_else(|| next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s"));
-                let vot = if aspirated { s.vot.unwrap_or(0.05) / rate } else { 0.012 };
-                gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration"));
+                // the folds stay apart past the release by 40% of the default 50 ms (the ramps
+                // make up the rest of the aspiration); a front end's longer or shorter `vot` moves
+                // that by the whole difference, so the voice onset time it asks for is what it gets
+                let past = match (aspirated, s.vot) {
+                    (true, None) => DEFAULT_VOT / rate * 0.4, // as before, to the bit
+                    (true, Some(v)) => js_max(0.0, 0.4 * DEFAULT_VOT + v - DEFAULT_VOT) / rate,
+                    (false, _) => 0.012 * 0.4,
+                };
+                let g = Gesture::new(t0 + 0.25 * dur, t1 + past, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration");
+                voiced_again = g.end();
+                gestures.push(g);
             } else {
                 gestures.push(Gesture::new(t0 - 0.015, t1 + 0.005, 0.03, 0.03, 6.0, one(ControlKey::ABDUCTION, 0.3)).label("voiceless"));
             }
@@ -439,6 +548,19 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             // (hill-climb log, experiment 29). So the same folds, parted only for the release.
             gestures.push(affricate_folds(t0 + dur * AFFRICATE_CLOSURE, t1).label("voiced affricate"));
         }
+        // a breathy-voiced release (Hindi bʱ): the folds part as the closure lets go and stay
+        // apart into the start of the vowel
+        if s.breathy == Some(true) && def.voicing == Voicing::Voiced && matches!(def.manner, Manner::Stop | Manner::Affricate) {
+            let until = js_min(t1 + BREATHY_RELEASE, times.get(i + 1).map_or(f64::MAX, |n| n.t1));
+            gestures.push(Gesture::new(t1 - 0.02, until, 0.03, 0.03, 5.0, one(ControlKey::ABDUCTION, BREATHY_ABDUCTION)).label("breathy"));
+        }
+        // palatalization: the tongue body goes toward /j/ under the consonant, stays there until the
+        // voice returns, and lets go into the vowel, so the release carries the [j]-like transition
+        if s.palatalized == Some(true) {
+            if let Some(tg) = palatal_body(def, body) {
+                gestures.push(Gesture::new(t0, voiced_again, PALATAL_RAMP, PALATAL_RAMP, PALATAL_STRENGTH, artic_targets(&tg)).label("palatalized"));
+            }
+        }
     }
     let open_end = o.open_end == Some(true);
     let sung = o.sung == Some(true);
@@ -447,15 +569,44 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     // the first segment starts, and builds into adducted folds or behind the first constriction
     // rather than voicing ahead of the note. Speech and live notes keep their 20 ms lead.
     let breath_at = if sung { BREATH_SUNG_AT } else { 0.04 };
-    gestures.push(Gesture::new(o.t0 + breath_at, end, 0.04, if open_end { 0.07 } else { 0.05 }, 1.0, one(ControlKey::BREATH, 1.0)).label("breath"));
+    let last = segs.last();
+    let sonorant = last.is_some_and(|l| l.vowel.is_some()) || last.and_then(|l| l.def).is_some_and(|d| matches!(d.manner, Manner::Nasal | Manner::Approximant | Manner::Lateral | Manner::Tap | Manner::Trill));
+    // how long the phrase's last note sounds at its end: back from the end over the sonorants that
+    // close it, then over its vowel, and over a vowel right before that only at the same pitch (a
+    // diphthong's two halves; the note before in a melisma or a hiatus has its own pitch and is
+    // not this note). No vowel there: the closing sonorants alone (a hummed or syllabic ending).
+    let closing = |g: &Seg| g.vowel.is_none() && g.def.is_some_and(|d| matches!(d.manner, Manner::Nasal | Manner::Approximant | Manner::Lateral | Manner::Tap | Manner::Trill));
+    let mut from = segs.len();
+    while from > 0 && closing(&segs[from - 1]) {
+        from -= 1;
+    }
+    if from > 0 && segs[from - 1].vowel.is_some() {
+        let pitch = segs[from - 1].f0;
+        from -= 1;
+        while from > 0 && segs[from - 1].vowel.is_some() && segs[from - 1].f0 == pitch {
+            from -= 1;
+        }
+    }
+    let room = if from < segs.len() { end - times[from].t0 } else { 0.0 };
+    // a sung phrase that ends on a vowel or sonorant is let go by the folds, with the breath still
+    // on, where the last voiced stretch is long enough to keep its tone until the opening starts
+    let let_go = sung && sonorant && !open_end && room >= LET_GO_ROOM;
+    let breath_end = if let_go { end + LET_GO_BREATH } else { end };
+    gestures.push(Gesture::new(o.t0 + breath_at, breath_end, 0.04, if open_end { 0.07 } else { 0.05 }, 1.0, one(ControlKey::BREATH, 1.0)).label("breath"));
     // ---- end of the breath group: the folds part as the breath stops, so a final obstruent is
-    // released into silence instead of into an added vowel ("cat-uh"). After a vowel or sonorant
-    // they part once the pressure has fallen, so the voice fades out instead of ending in an [h].
+    // released into silence instead of into an added vowel ("cat-uh"). After a spoken vowel or
+    // sonorant they part once the pressure has fallen, so the voice fades out instead of ending in
+    // an [h]. A sung one ends the way a singer ends a note: the folds part slowly, from before the
+    // vowel's end, while the breath is still there, and the tone thins over the last tenth of a
+    // second instead of being cut off as the pressure crosses the voicing threshold.
     if !open_end {
-        let last = segs.last();
-        let sonorant = last.is_some_and(|l| l.vowel.is_some()) || last.and_then(|l| l.def).is_some_and(|d| matches!(d.manner, Manner::Nasal | Manner::Approximant | Manner::Lateral | Manner::Tap | Manner::Trill));
-        let at = end + if sonorant { 0.045 } else { 0.015 };
-        gestures.push(Gesture::new(at, end + 0.1, 0.03, 0.06, 6.0, one(ControlKey::ABDUCTION, 0.22)).label(EXHALE_LABEL));
+        if let_go {
+            let at = end + LET_GO_OPEN_AT;
+            gestures.push(Gesture::new(at, end + 0.1, LET_GO_OPENING, 0.06, LET_GO_STRENGTH, one(ControlKey::ABDUCTION, 0.22)).label(EXHALE_LABEL));
+        } else {
+            let at = end + if sonorant { 0.045 } else { 0.015 };
+            gestures.push(Gesture::new(at, end + 0.1, 0.03, 0.06, 6.0, one(ControlKey::ABDUCTION, 0.22)).label(EXHALE_LABEL));
+        }
     }
     // ---- intonation: pitch targets on vowels
     let f0 = o.f0.unwrap_or(110.0);
@@ -516,6 +667,9 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             gestures.push(Gesture::new(t0, t1, r, r, 6.0, one(ControlKey::F0, s.f0.unwrap())).label("pitch"));
         }
     }
+    if rate > 1.0 {
+        shorten_timing(&mut gestures, rate);
+    }
     Plan { gestures, segments: planned, end }
 }
 
@@ -571,6 +725,37 @@ fn stop_closure_delay(place: &str, prev: Option<&Seg>) -> f64 {
     }
 }
 
+/// How firmly a palatalized consonant's tongue body is held (the overlapping vowel has 1.0, the
+/// consonant's own articulators 40), and how long it takes to take and let go of the posture (s)
+const PALATAL_STRENGTH: f64 = 3.0;
+const PALATAL_RAMP: f64 = 0.04;
+
+/// The tongue body's posture for a palatalized consonant: /j/'s, on the coordinates the consonant
+/// itself does not use. A velar closes with the body's height, so only its front-back
+/// place moves (fronted); a consonant with no free body coordinate (palatals, uvulars, /w/, /ɫ/,
+/// glottals) has nothing to add.
+fn palatal_body(def: &PhonemeDef, body: BodyMix) -> Option<ArticPatch> {
+    let j = phoneme("j", body)?;
+    let mut out = ArticPatch::default();
+    for k in [ArticKey::TbX, ArticKey::TbY] {
+        if let (false, Some(x)) = (def.dominant.contains(&k), j.targets.get(k)) {
+            out.set(k, x);
+        }
+    }
+    (!out.is_empty() && def.place != "palatal" && def.manner != Manner::Glottal).then_some(out)
+}
+
+/// Fast speech: segments shrink by the rate, so the gestures' ramps and release holds must shrink
+/// too. With fixed ones, a stop's closure outlasted the short vowel after it: at rate 1.8 the /ɑ/
+/// of "ɑtɑtɑ" never opened (tests/fast_speech.rs). Pitch and breath gestures keep their ramps.
+fn shorten_timing(gestures: &mut [Gesture], rate: f64) {
+    for g in gestures.iter_mut().filter(|g| !g.targets.has(ControlKey::F0) && !g.targets.has(ControlKey::BREATH)) {
+        g.ramp_in /= rate;
+        g.ramp_out /= rate;
+        g.release_hold = g.release_hold.map(|h| h / rate);
+    }
+}
+
 /// Front-to-back order of the oral places of articulation.
 fn place_rank(place: &str) -> Option<u8> {
     Some(match place {
@@ -590,6 +775,8 @@ fn place_rank(place: &str) -> Option<u8> {
 /// How much later a pre-placed closure behind another stop's closure is aimed (s): the time its
 /// shorter travel saves, so it seals as the front closure opens.
 const PLACED_CLOSURE_DELAY: f64 = 0.025;
+/// An aspirated stop's voice onset time when its front end doesn't say (English's), in seconds.
+const DEFAULT_VOT: f64 = 0.05;
 
 /// Whether stop `i` closes behind the closure of the stop before it, with its own articulators
 /// already set by the consonant before that one (/t/ in /ɹpt/: the tip is up for the /ɹ/ and

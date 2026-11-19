@@ -6,13 +6,14 @@
 //! English words come from the pronouncing dictionary (unreduced: sung function words keep full
 //! vowels), are split into syllables by the maximal-onset principle with English onset clusters,
 //! and the spelling is split to match for display ("twin-kle"). Hangul words go to
-//! [`super::korean`], one syllable per block. Typed hyphens force syllable breaks; a lone "-" (or
+//! [`super::korean`], one syllable per block, Cyrillic words to [`super::russian`]. Typed hyphens force syllable breaks; a lone "-" (or
 //! "~") holds the previous vowel onto the next note (melisma), as in vocaloid editors.
 
 use crate::anatomy::human::BodyMix;
 use super::english::js_is_space;
 use super::korean::Korean;
-use super::mandarin::Pinyin;
+use super::mandarin::{Mandarin, MandarinLexicon, Pinyin};
+use super::russian::Russian;
 use super::planner::is_vowel;
 use super::{Segment, Syllable};
 use serde::{Deserialize, Serialize};
@@ -25,8 +26,6 @@ const ONSETS: &[&str] = &[
     "sp", "st", "sk", "sm", "sn", "sw", "sf", "tw", "kw", "dw", "gw", "θw",
     "pj", "bj", "kj", "gj", "mj", "nj", "fj", "vj", "hj", "lj",
     "spl", "spɹ", "stɹ", "skɹ", "skw", "skj", "spj",
-    // Portuguese's (English words never have these sounds): ca-ro, mi-nha, o-bri-ga-do
-    "ɾ", "ɲ", "ʎ", "ʁ", "pɾ", "bɾ", "tɾ", "dɾ", "kɾ", "gɾ", "fɾ", "vɾ",
 ];
 
 /// One syllable of a word, before it gets its text.
@@ -38,8 +37,20 @@ pub struct SyllableParts {
     pub coda: Vec<Segment>,
 }
 
-/// Split one word's segments into onset / nucleus / coda syllables.
+/// Split one word's segments into onset / nucleus / coda syllables, with English's onsets.
 pub fn syllabify_segments(segs: &[Segment]) -> Vec<SyllableParts> {
+    syllabify_with(segs, is_english_onset)
+}
+
+/// A consonant cluster that can start an English syllable.
+pub fn is_english_onset(cluster: &[Segment]) -> bool {
+    let cluster: String = cluster.iter().map(|s| s.ipa.as_str()).collect();
+    ONSETS.contains(&cluster.as_str())
+}
+
+/// Split one word's segments into syllables: of the consonants between two vowels, the longest
+/// run that `is_onset` accepts starts the second syllable.
+pub fn syllabify_with(segs: &[Segment], is_onset: impl Fn(&[Segment]) -> bool) -> Vec<SyllableParts> {
     let vi: Vec<usize> = segs.iter().enumerate().filter(|(_, s)| is_vowel(&s.ipa, BodyMix::MALE)).map(|(i, _)| i).collect();
     if vi.is_empty() {
         return Vec::new();
@@ -52,9 +63,8 @@ pub fn syllabify_segments(segs: &[Segment]) -> Vec<SyllableParts> {
             // consonants between this vowel and the next: the longest legal onset goes right
             let between = &segs[v + 1..next];
             let mut k = 0;
-            for len in (1..=3.min(between.len())).rev() {
-                let cluster: String = between[between.len() - len..].iter().map(|s| s.ipa.as_str()).collect();
-                if ONSETS.contains(&cluster.as_str()) {
+            for len in (1..=between.len()).rev() {
+                if is_onset(&between[between.len() - len..]) {
                     k = len;
                     break;
                 }
@@ -175,6 +185,12 @@ pub trait FrontEnd {
     }
     /// One word → its syllables (the router marks the last as the word's end).
     fn word(&self, word: &str) -> Vec<Syllable>;
+    /// The same, knowing the word of this front end just before it in the phrase, for a language
+    /// whose words lean on each other (a Russian preposition with no vowel has no note of its
+    /// own: it returns no syllables and starts the next word's first one).
+    fn word_after(&self, word: &str, _prev: Option<&str>) -> Vec<Syllable> {
+        self.word(word)
+    }
 }
 
 /// English, through a [`WordSource`] (the pronouncing dictionary, or letter-to-sound rules).
@@ -214,20 +230,25 @@ enum Token {
 }
 
 /// Words (with the index of the front end that claims them), melisma marks and phrase punctuation,
-/// in order. For English and Hangul this is
+/// in order. For English and precomposed Hangul this is
 /// `text.match(/[A-Za-z'][A-Za-z'\-]*|[가-힣]+|(?<=\s|^)[~-](?=\s|$)|[.,;:!?\n]/g)`.
 fn lyric_tokens(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Token> {
     let s: Vec<char> = text.chars().collect();
     let mut out = Vec::new();
     let mut i = 0;
+    // where each front end may claim again after declining a word (the end of that word)
+    let mut barred = vec![0usize; front_ends.len()];
     while i < s.len() {
         let c = s[i];
-        // the first front end that starts here and claims the word it scans. A longer word that an
-        // earlier front end scanned and declined isn't re-entered midway: "café" is English's
-        // "caf" (the é dropped, as before), not "caf" and a pinyin "é"
-        let mut declined = i;
+        // the first front end that starts here and claims the word it scans. A front end that
+        // declines a word (pinyin and English share the Latin alphabet) can't claim a piece of it
+        // either: the others read that span as they would without it ("café" stays English's "caf",
+        // not "caf" and a pinyin "é"), and nothing in it is lost ("Zürich" is "Z" "rich", as on main)
         let mut word = None;
-        for (k, f) in front_ends.iter().enumerate().filter(|(_, f)| f.starts(c)) {
+        for (k, f) in front_ends.iter().enumerate() {
+            if !f.starts(c) || barred[k] > i {
+                continue;
+            }
             let mut j = i + 1;
             while j < s.len() && f.continues(s[j]) {
                 j += 1;
@@ -237,11 +258,11 @@ fn lyric_tokens(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Token> {
                 word = Some((k, j, w));
                 break;
             }
-            declined = declined.max(j);
+            barred[k] = j;
         }
         if let Some((k, j, w)) = word {
             out.push(Token::Word(k, w));
-            i = j.max(declined);
+            i = j;
             continue;
         }
         let melisma = (c == '~' || c == '-') && (i == 0 || js_is_space(s[i - 1])) && (i + 1 == s.len() || js_is_space(s[i + 1]));
@@ -257,9 +278,12 @@ fn lyric_tokens(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Token> {
 /// front end claims (other scripts, symbols) are skipped.
 pub fn read_lyrics(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Syllable> {
     let mut out: Vec<Syllable> = Vec::new();
+    // the word before this one and its front end, within a phrase
+    let mut prev: Option<(usize, String)> = None;
     for tok in lyric_tokens(&text.replace('’', "'"), front_ends) {
         match tok {
             Token::Mark(c) if is_lyric_punct(c) => {
+                prev = None;
                 if let Some(last) = out.last_mut() {
                     last.phrase_end = true;
                 }
@@ -271,11 +295,13 @@ pub fn read_lyrics(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Syllable> {
                 }
             }
             Token::Word(k, w) => {
-                let mut syls = front_ends[k].word(&w);
+                let before = prev.as_ref().filter(|(pk, _)| *pk == k).map(|(_, p)| p.as_str());
+                let mut syls = front_ends[k].word_after(&w, before);
                 if let Some(last) = syls.last_mut() {
                     last.word_end = true;
                 }
                 out.append(&mut syls);
+                prev = Some((k, w));
             }
         }
     }
@@ -283,8 +309,16 @@ pub fn read_lyrics(text: &str, front_ends: &[&dyn FrontEnd]) -> Vec<Syllable> {
 }
 
 /// Lyrics text → syllables through the built-in front ends that need no data beyond the English
-/// dictionary: pinyin (only words with tones; before English, which shares its alphabet), English
-/// (`g2p`) and Korean.
+/// dictionary: every built-in front end but Mandarin's characters (they need its lexicon; see
+/// [`lyrics_to_syllables_with`]).
 pub fn lyrics_to_syllables(text: &str, g2p: &impl WordSource) -> Vec<Syllable> {
-    read_lyrics(text, &[&Pinyin, &English(g2p), &Korean])
+    lyrics_to_syllables_with(text, g2p, &MandarinLexicon::new())
+}
+
+/// Lyrics → sung syllables through every built-in front end: pinyin (only words with tones; before
+/// English, which shares its alphabet), English (`g2p`), Korean, Russian, and Mandarin with its
+/// lexicon (empty: Han characters are skipped). The one list the app, the wasm engine and the CLI
+/// all read lyrics through, so a new front end can't be missing from one of them.
+pub fn lyrics_to_syllables_with(text: &str, g2p: &impl WordSource, zh: &MandarinLexicon) -> Vec<Syllable> {
+    read_lyrics(text, &[&Pinyin, &English(g2p), &Korean, &Russian, &Mandarin(zh)])
 }

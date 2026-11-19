@@ -67,4 +67,21 @@ pub static VOWELS: &[VowelRef] = &[
     // consonant's tongue held open; the retroflex one has a low F3 (approximate male means)
     vref("ɿ", "Mandarin si (apical)", [360.0, 1400.0, 2600.0], None, None, false, 0.0, 0.45),
     vref("ʅ", "Mandarin shi (apical, retroflex)", [400.0, 1500.0, 2000.0], None, None, false, 0.05, 0.55),
+    // Mandarin's own vowels, measured on Beijing speakers (Zee & Lee 2001, doi 10.21437/Eurospeech.2001-169:
+    // 10 men and 10 women, 5 repetitions, LPC at the vowel's midpoint; female values are theirs, the child's
+    // are the male's scaled by the file's factor). The English vowels of the same name are not Mandarin's:
+    // American /u/ "who'd" has F2 ~1000 Hz, Mandarin's 661. The key is the English symbol plus U+0320
+    // (retracted), so these entries cannot collide with, or be reached by typing, the English ones.
+    // u̠ achieves (F1 / F2 / F3 Hz, target in brackets): male 383 / 649 / 2482 (345 / 661 / 2783), female 366 / 776 / 2841
+    // (345 / 759 / 3309), child 465 / 942 / 3344 (449 / 879 / 3451). F2, what makes it not English /u/, is within
+    // 2-3 % for the adults; F1 is +11 % male and +6 % female because the tube cannot go lower: male tbX, jaw and
+    // lip width are at their lower bounds (1.2, 0.05, 0) and lip protrusion at its upper (1.4). The female
+    // fit starts from the male solution (calibrate.rs `start_from`; from the generic guess it settled at
+    // jaw 1.8, F2 +11 %). The child's F2 is +7 %.
+    vref("u̠", "Mandarin wu, hu (back u)", [345.0, 661.0, 2783.0], Some([345.0, 759.0, 3309.0]), None, true, 0.0, 1.0),
+    // ʊ̠ is the vowel of ong / iong and the off-glide of ao ou iao iou (the table's "u before ŋ": Zee & Lee's
+    // men 441 / 730 / 2881, women 533 / 945 / 3314; English /ʊ/ "hood" has F2 1122 / 1225). It achieves
+    // (F1 / F2 / F3 Hz): male 422 / 765 / 2345, female 513 / 972 / 2859, child 555 / 1004 / 3360: F1 and F2 within
+    // 5 % on every body (F3, weighted least in the fit, -14 to -19 % for the adults).
+    vref("ʊ̠", "Mandarin ong (back ʊ)", [441.0, 730.0, 2881.0], Some([533.0, 945.0, 3314.0]), None, true, 0.2, 1.0),
 ];

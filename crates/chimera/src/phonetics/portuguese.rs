@@ -1,5 +1,5 @@
 //! Offline Brazilian Portuguese letter-to-sound front end.
-use super::{Segment, Syllable, Phrase, Intonation, syllables::{English, FrontEnd, WordSource}};
+use super::{Segment, Syllable, Intonation, english::Phrase, syllables::{English, FrontEnd, WordSource}};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug, Default)]

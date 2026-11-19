@@ -12,7 +12,7 @@
 use super::score::Gesture;
 use crate::anatomy::human::BodyMix;
 use crate::math::{js_max, js_min, midi_to_hz};
-use crate::phonetics::beatbox::{BASS_NOTE, BeatBuild, BeatStep, MAX_SOUND_GESTURES, beat_sound};
+use crate::phonetics::beatbox::{BASS_NOTE, BeatBuild, BeatStep, MAX_BEAT_STEPS, MAX_SOUND_GESTURES, beat_sound};
 
 /// scheduled steps remembered for the playhead (well over a horizon's worth)
 const MARKS: usize = 32;
@@ -46,8 +46,12 @@ impl BeatPlayer {
     pub const STEPS_PER_BEAT: f64 = 4.0;
     /// schedule a step when its hit is this close (s); covers every sound's set-up time
     pub const HORIZON: f64 = 0.2;
-    /// the longest pattern kept (longer ones are cut, as the worklet did)
-    pub const MAX_STEPS: usize = 128;
+    /// the longest pattern kept (16 bars; [`parse_beat`](crate::phonetics::beatbox::parse_beat)
+    /// cuts longer text there, so the grid shows only what plays)
+    pub const MAX_STEPS: usize = MAX_BEAT_STEPS;
+    /// tempo range: a sixteenth at 240 bpm is 62 ms, about as fast as a beatboxer goes
+    pub const MIN_BPM: f64 = 40.0;
+    pub const MAX_BPM: f64 = 240.0;
 
     pub fn new() -> Self {
         BeatPlayer {
@@ -99,7 +103,7 @@ impl BeatPlayer {
 
     /// Change tempo without a jump: the next unscheduled step keeps its time.
     pub fn set_tempo(&mut self, bpm: f64, swing: f64) {
-        let b = js_min(200.0, js_max(40.0, bpm));
+        let b = js_min(Self::MAX_BPM, js_max(Self::MIN_BPM, bpm));
         if self.playing && b != self.bpm {
             self.anchor_time += (self.next - self.anchor_step) as f64 * self.step_dur();
             self.anchor_step = self.next;

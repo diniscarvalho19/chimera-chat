@@ -12,10 +12,9 @@ use chimera::phonetics::beatbox::{self, BeatStep};
 use chimera::phonetics::planner::{self, PhraseInput, PlanOptions};
 use chimera::phonetics::sing::{self, MelismaOptions, NoteOnOptions, SongOptions, SungNote};
 use chimera::phonetics::english::EnglishG2P;
+use chimera::phonetics::mandarin::MandarinLexicon;
 use chimera::phonetics::portuguese::{PortugueseG2P, PortugueseLyrics};
-use chimera::phonetics::korean::Korean;
-use chimera::phonetics::mandarin::{Mandarin, MandarinLexicon, Pinyin};
-use chimera::phonetics::syllables::{English, read_lyrics};
+use chimera::phonetics::syllables::{lyrics_to_syllables_with, read_lyrics};
 use chimera::phonetics::{Segment, Syllable, ipa, songs, vowel_data};
 use chimera::voice::human_airway::HumanAirway;
 use serde_json::{Value, json};
@@ -72,7 +71,7 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             // the main-thread mirror of the worklet's airway: same topology and node counts
             let body: BodyMix = arg(req, "body")?;
             let fs: f64 = arg(req, "sampleRate")?;
-            let m = if fs > 60000.0 { 1.0 } else { 2.0 };
+            let m = chimera::voice::human_voice::oversample_for(fs) as f64;
             let i = match st.models.iter().position(|x| x.body == body && x.fs == fs * m) {
                 Some(i) => i,
                 None => {
@@ -126,6 +125,8 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
         }
         // ---------------------------------------------------------------- text → phonemes
         "tokenizeIpa" => to_json(&ipa::tokenize_ipa(&arg::<String>(req, "text")?)),
+        // what tokenizeIpa leaves out of the text without a word: { unknown, noSound, ignoredMarks }
+        "skippedIpa" => to_json(&ipa::skipped_ipa(&arg::<String>(req, "text")?)),
         "g2pLoad" => {
             st.g2p.load_dict(&arg::<String>(req, "text")?);
             Ok(json!(true))
@@ -141,7 +142,7 @@ fn dispatch(st: &mut State, req: &Value) -> Res {
             Ok(json!(true))
         }
         // every built-in front end: pinyin, English, Korean, and Mandarin once its lexicon is loaded
-        "lyricsToSyllables" => to_json(&read_lyrics(&arg::<String>(req, "text")?, &[&Pinyin, &English(&st.g2p), &Korean, &Mandarin(&st.mandarin)])),
+        "lyricsToSyllables" => to_json(&lyrics_to_syllables_with(&arg::<String>(req, "text")?, &st.g2p, &st.mandarin)),
         // ---------------------------------------------------------------- creatures
         "creaturePreview" => {
             let id: String = arg(req, "id")?;

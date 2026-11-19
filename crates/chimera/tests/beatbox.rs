@@ -140,3 +140,41 @@ fn after_the_voice_is_replaced_steps_not_yet_heard_are_scheduled_again_at_their_
         assert!(close(again[i].t, *t, 9));
     }
 }
+
+/// #100: a 256-step pattern played only its first 128 steps, then looped (the grid showed all
+/// of it), and the tempo stopped at 200 bpm. Now the whole pattern plays, up to 240 bpm, and
+/// text past the limit is cut where the player stops, so the grid never shows unplayed steps.
+#[test]
+fn a_sixteen_bar_pattern_plays_to_its_end_at_240_bpm() {
+    let text = vec!["B t Pf t"; 75].join(" | "); // 300 steps
+    let steps = parse_beat(&text);
+    assert_eq!(steps.len(), BeatPlayer::MAX_STEPS);
+    assert_eq!(BeatPlayer::MAX_STEPS, 256);
+
+    let mut p = BeatPlayer::new();
+    p.set_steps(&steps);
+    assert_eq!(p.steps().len(), 256);
+    p.set_tempo(300.0, 0.0);
+    assert_eq!(p.bpm, 240.0);
+    p.start(0.0);
+    let dt = 128.0 / 48000.0;
+    let (mut clock, mut last) = (0.0, -1i64);
+    let (mut first_at, mut wrapped_at) = (None, None);
+    while clock < 17.0 {
+        p.tick(clock, &mut |_: &[Gesture]| {});
+        let s = p.step_at(clock);
+        if s == 0 && first_at.is_none() {
+            first_at = Some(clock);
+        }
+        if s >= 0 && s < last && wrapped_at.is_none() {
+            wrapped_at = Some((last, clock));
+        }
+        last = s;
+        clock += dt;
+    }
+    let (end, t) = wrapped_at.expect("the pattern never looped");
+    assert_eq!(end, 255, "the playhead looped back before the last step");
+    // 256 sixteenths at 240 bpm: 16 s from the first hit
+    let period = t - first_at.unwrap();
+    assert!((period - 16.0).abs() < 0.01, "the pattern took {period:.3} s, not 16 s");
+}

@@ -84,8 +84,11 @@ export interface BeatStepRecord {
   accent?: number;
 }
 
+/** The longest beat pattern the engine plays (`MAX_BEAT_STEPS` in `phonetics/beatbox.rs`). */
+export const MAX_BEAT_STEPS = 256;
+
 /** Write beat steps (null: rest) as 48-byte records at byte offset `at`. Returns the count written. */
-export function writeSteps(buf: ArrayBuffer, at: number, steps: readonly (BeatStepRecord | null)[], max = 128): number {
+export function writeSteps(buf: ArrayBuffer, at: number, steps: readonly (BeatStepRecord | null)[], max = MAX_BEAT_STEPS): number {
   const n = Math.min(steps.length, max);
   const dv = new DataView(buf, at, n * STEP_RECORD);
   const bytes = new Uint8Array(buf, at, n * STEP_RECORD);

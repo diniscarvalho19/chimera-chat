@@ -322,13 +322,20 @@ fn split_note(tok: &str) -> Option<(&str, &str)> {
     Some((head, digits))
 }
 
+/// The longest pattern the beat player plays: 16 bars of sixteenths.
+pub const MAX_BEAT_STEPS: usize = 256;
+
 /// Parse a beat written as text: tokens separated by spaces or "|" (bar lines, ignored);
 /// "." or "-" is a rest; a hum may carry a MIDI note ("m:43"); a trailing ">" accents.
+/// Steps past [`MAX_BEAT_STEPS`] are dropped: the player would never reach them.
 pub fn parse_beat(text: &str) -> Vec<Option<BeatStep>> {
     let mut out = Vec::new();
     for raw in text.split(|c: char| js_space(c) || c == '|') {
         if raw.is_empty() {
             continue;
+        }
+        if out.len() == MAX_BEAT_STEPS {
+            break;
         }
         if raw == "." || raw == "-" {
             out.push(None);
