@@ -9,6 +9,7 @@
 
 use super::types::{CallTarget, CreatureDef, CreatureSim, Curve, GateTimes};
 use crate::airway::decimator::Decimator;
+use crate::airway::network::tiny;
 use crate::math::{PI, exp, js_max, js_min, js_round, js_sign, pow, sqrt, tanh};
 use serde::ser::{SerializeMap, Serializer};
 use serde::Serialize;
@@ -349,6 +350,12 @@ impl CreatureVoice {
         let gt = self.def.gate_times.unwrap_or(DEFAULT_GATE_TIMES);
         let tau = if goal > self.gate { gt.attack } else { gt.release };
         self.gate += (goal - self.gate) * (1.0 - exp(-dt / tau));
+        // what dies away must end at zero, not among the denormals (see `AirwayNetwork::flush_tiny`):
+        // a breath let go would leave a denormal lung pressure feeding the whole airway
+        tiny(&mut self.gate);
+        tiny(&mut self.dc_x);
+        tiny(&mut self.dc_y);
+        self.sim.flush_tiny();
         self.sim.control(&self.value, self.gate, dt);
         let every = self.ctrl_every;
         if let Some(net) = self.sim.net_mut() {

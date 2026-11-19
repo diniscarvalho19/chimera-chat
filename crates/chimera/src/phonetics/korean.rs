@@ -2,12 +2,19 @@
 //! note. The block keeps its spelling as the note's text; its sounds follow standard Seoul
 //! pronunciation inside a word: a coda moves onto a following silent ㅇ (먹어 → 머거), codas
 //! neutralise to seven sounds, obstruents nasalise before nasals (국물 → 궁물), ㄴ/ㄹ meet as [ll],
-//! ㅎ aspirates its neighbour (좋다 → 조타), and obstruents tense after an obstruent coda.
+//! ㅎ aspirates its neighbour (좋다 → 조타) or drops before a vowel and lets the consonant before it
+//! move over (싫어 → 시러), ㄷ ㅌ palatalise before 이 (같이 → 가치), and obstruents tense after an
+//! obstruent coda.
 //!
 //! Stops say their own aspiration (Segment::aspirated): aspirated ㅋ ㅌ ㅍ ㅊ are aspirated, and
 //! tense ㄲ ㄸ ㅃ ㅉ are voiceless and unaspirated (the engine has no stiff "fortis" phonation yet).
-//! Lax stops keep the planner's default: aspirated word-initially, voiced between voiced sounds.
+//! Lax stops aspirate briefly word-initially and aspirated ones long (Segment::vot); lax stops are
+//! voiced between voiced sounds.
 //! ㅈ ㅊ ㅉ are alveolo-palatal [tɕ], and ㅅ ㅆ before [i] or [j] are [ɕ].
+//!
+//! A block may also be typed as its letters, conjoining jamo (decomposed text, NFD): modern ones
+//! are joined into the block first. The letters modern Korean dropped (ㆍ ㅿ ㆁ ㆆ) have no block,
+//! so a block with one isn't read, like any other script no front end reads.
 
 use super::syllables::FrontEnd;
 use super::{Segment, Syllable};
@@ -16,6 +23,41 @@ const BASE: u32 = 0xAC00;
 
 pub fn is_hangul(c: char) -> bool {
     ('\u{AC00}'..='\u{D7A3}').contains(&c)
+}
+
+/// Modern conjoining jamo: an initial (L), a vowel (V) and a final (T), the letters a block is
+/// made of in decomposed text.
+const L: std::ops::RangeInclusive<u32> = 0x1100..=0x1112;
+const V: std::ops::RangeInclusive<u32> = 0x1161..=0x1175;
+const T: std::ops::RangeInclusive<u32> = 0x11A8..=0x11C2;
+
+fn is_modern_jamo(c: char) -> bool {
+    let c = c as u32;
+    L.contains(&c) || V.contains(&c) || T.contains(&c)
+}
+
+/// Modern conjoining jamo joined into blocks (Unicode's Hangul composition, as NFC does): L V
+/// is a block, and a block without a final takes a following T. Anything else is left as it was.
+fn compose(word: &str) -> String {
+    let mut out = String::with_capacity(word.len());
+    let mut last: Option<char> = None;
+    for c in word.chars() {
+        let (l, n) = (last.map(|c| c as u32), c as u32);
+        let joined = match l {
+            Some(l) if L.contains(&l) && V.contains(&n) => Some(BASE + ((l - 0x1100) * 21 + n - 0x1161) * 28),
+            Some(l) if is_hangul(char::from_u32(l).unwrap()) && (l - BASE).is_multiple_of(28) && T.contains(&n) => Some(l + n - 0x11A7),
+            _ => None,
+        };
+        match joined {
+            Some(b) => last = char::from_u32(b),
+            None => {
+                out.extend(last);
+                last = Some(c);
+            }
+        }
+    }
+    out.extend(last);
+    out
 }
 
 /// Initial consonants in Unicode order. 'ㅇ' as an initial is silent.
@@ -97,14 +139,21 @@ fn tense(c: char) -> char {
 
 /// Apply the sound rules at the boundary between block `a` and the next block `b`.
 fn join(a: &mut Block, b: &mut Block) {
-    // a coda before a silent ㅇ moves over (ㅎ drops, ㅇ stays: 좋아 → 조아, 빵야 → 빵야)
+    // a coda before a silent ㅇ moves over (ㅎ drops, ㅇ stays: 좋아 → 조아, 빵야 → 빵야); after a
+    // dropped ㅎ the consonant before it moves (싫어 → 시러, 많아 → 마나), and ㄷ ㅌ moving onto
+    // 이 palatalise (굳이 → 구지, 같이 → 가치)
     if b.onset.is_none() {
-        match a.coda.last() {
-            Some('ㅎ') => {
-                a.coda.pop();
-            }
-            Some('ㅇ') | None => {}
-            Some(_) => b.onset = a.coda.pop(),
+        if a.coda.last() == Some(&'ㅎ') {
+            a.coda.pop();
+        }
+        if a.coda.last().is_some_and(|&c| c != 'ㅇ') {
+            let c = a.coda.pop().unwrap();
+            let before_i = b.vowel == "i" && b.glide.is_empty();
+            b.onset = Some(match c {
+                'ㄷ' if before_i => 'ㅈ',
+                'ㅌ' if before_i => 'ㅊ',
+                _ => c,
+            });
         }
         return;
     }
@@ -114,6 +163,8 @@ fn join(a: &mut Block, b: &mut Block) {
         let o = b.onset.unwrap();
         b.onset = Some(match o {
             'ㅅ' => 'ㅆ',
+            // ㄶ and ㅎ read [nn] before ㄴ (않는 → 안는, 놓는 → 논는); ㅀ reads [ll] (싫니 → 실리)
+            'ㄴ' if a.coda == ['ㄹ'] => 'ㄹ',
             'ㄴ' => {
                 a.coda = vec!['ㄴ'];
                 'ㄴ'
@@ -123,6 +174,16 @@ fn join(a: &mut Block, b: &mut Block) {
         if a.coda.is_empty() {
             return;
         }
+    }
+    // Standard Pronunciation 10: 밟- keeps ㅂ before consonants. Before ㅎ,
+    // preserve ㄹ and aspirate ㅂ instead (밟히다 -> 발피다, rule 12).
+    if a.text == '밟' && a.coda == ['ㄹ', 'ㅂ'] {
+        if b.onset == Some('ㅎ') {
+            a.coda = vec!['ㄹ'];
+            b.onset = Some('ㅍ');
+            return;
+        }
+        a.coda = vec!['ㅂ'];
     }
     let Some(c) = simplify(&a.coda).map(neutral) else { return };
     a.coda = vec![c];
@@ -157,32 +218,44 @@ fn join(a: &mut Block, b: &mut Block) {
 }
 
 /// An initial's sound, and its aspiration when the letter decides it (None: the planner's default).
-fn onset_ipa(o: char, voiced_before: bool, front: bool, after_l: bool) -> (&'static str, Option<bool>) {
+/// Korean's three stops, word-initially all voiceless, told apart by how long they aspirate:
+/// aspirated ㅋ ㅌ ㅍ ㅊ long, lax ㄱ ㄷ ㅂ ㅈ briefly, tense ㄲ ㄸ ㅃ ㅉ not at all (word-initial voice
+/// onset times of about 90, 45 and 10 ms). Between voiced sounds a lax stop is voiced.
+const ASPIRATED_VOT: f64 = 0.09;
+const LAX_VOT: f64 = 0.045;
+
+/// An initial → its IPA, whether it aspirates, and for how long (s).
+fn onset_ipa(o: char, voiced_before: bool, front: bool, after_l: bool) -> (&'static str, Option<bool>, Option<f64>) {
+    let lax = |voiced: &'static str, voiceless: &'static str| {
+        if voiced_before {
+            (voiced, None, None)
+        } else {
+            (voiceless, Some(true), Some(LAX_VOT))
+        }
+    };
+    let aspirated = |ipa: &'static str| (ipa, Some(true), Some(ASPIRATED_VOT));
+    let tense = |ipa: &'static str| (ipa, Some(false), None);
     match o {
-        'ㄱ' if voiced_before => ("g", None),
-        'ㄱ' => ("k", None),
-        'ㅋ' => ("k", Some(true)),
-        'ㄲ' => ("k", Some(false)),
-        'ㄷ' if voiced_before => ("d", None),
-        'ㄷ' => ("t", None),
-        'ㅌ' => ("t", Some(true)),
-        'ㄸ' => ("t", Some(false)),
-        'ㅂ' if voiced_before => ("b", None),
-        'ㅂ' => ("p", None),
-        'ㅍ' => ("p", Some(true)),
-        'ㅃ' => ("p", Some(false)),
-        'ㅈ' if voiced_before => ("dʑ", None),
-        'ㅈ' => ("tɕ", None),
-        'ㅊ' => ("tɕ", Some(true)),
-        'ㅉ' => ("tɕ", Some(false)),
-        'ㅅ' | 'ㅆ' if front => ("ɕ", None),
-        'ㅅ' | 'ㅆ' => ("s", None),
-        'ㅎ' if voiced_before => ("ɦ", None),
-        'ㅎ' => ("h", None),
-        'ㄴ' => ("n", None),
-        'ㅁ' => ("m", None),
-        'ㄹ' if after_l => ("l", None),
-        'ㄹ' => ("ɾ", None),
+        'ㄱ' => lax("g", "k"),
+        'ㅋ' => aspirated("k"),
+        'ㄲ' => tense("k"),
+        'ㄷ' => lax("d", "t"),
+        'ㅌ' => aspirated("t"),
+        'ㄸ' => tense("t"),
+        'ㅂ' => lax("b", "p"),
+        'ㅍ' => aspirated("p"),
+        'ㅃ' => tense("p"),
+        'ㅈ' => lax("dʑ", "tɕ"),
+        'ㅊ' => aspirated("tɕ"),
+        'ㅉ' => tense("tɕ"),
+        'ㅅ' | 'ㅆ' if front => ("ɕ", None, None),
+        'ㅅ' | 'ㅆ' => ("s", None, None),
+        'ㅎ' if voiced_before => ("ɦ", None, None),
+        'ㅎ' => ("h", None, None),
+        'ㄴ' => ("n", None, None),
+        'ㅁ' => ("m", None, None),
+        'ㄹ' if after_l => ("l", None, None),
+        'ㄹ' => ("ɾ", None, None),
         _ => unreachable!("not an initial: {o}"),
     }
 }
@@ -202,7 +275,7 @@ fn coda_ipa(c: char) -> &'static str {
 
 /// One word of Hangul (a run of blocks) → its sung syllables, the last marked as the word's end.
 pub fn word_syllables(word: &str) -> Vec<Syllable> {
-    let mut blocks: Vec<Block> = word.chars().filter(|&c| is_hangul(c)).map(decompose).collect();
+    let mut blocks: Vec<Block> = compose(word).chars().filter(|&c| is_hangul(c)).map(decompose).collect();
     for i in 1..blocks.len() {
         let (l, r) = blocks.split_at_mut(i);
         join(l.last_mut().unwrap(), &mut r[0]);
@@ -218,8 +291,8 @@ pub fn word_syllables(word: &str) -> Vec<Syllable> {
         let mut onset: Vec<Segment> = b
             .onset
             .map(|o| {
-                let (ipa, aspirated) = onset_ipa(o, voiced_before, front, prev_coda == Some('ㄹ'));
-                Segment { aspirated, ..Segment::new(ipa) }
+                let (ipa, aspirated, vot) = onset_ipa(o, voiced_before, front, prev_coda == Some('ㄹ'));
+                Segment { aspirated, vot, ..Segment::new(ipa) }
             })
             .into_iter()
             .collect();
@@ -235,7 +308,6 @@ pub fn word_syllables(word: &str) -> Vec<Syllable> {
             melisma: None,
             word_end: i + 1 == blocks.len(),
             phrase_end: false,
-            // no pitch bends: Korean has no lexical tone (and fields added later default)
             ..Default::default()
         });
     }
@@ -247,7 +319,10 @@ pub struct Korean;
 
 impl FrontEnd for Korean {
     fn starts(&self, c: char) -> bool {
-        is_hangul(c)
+        is_hangul(c) || L.contains(&(c as u32))
+    }
+    fn continues(&self, c: char) -> bool {
+        is_hangul(c) || is_modern_jamo(c)
     }
     fn word(&self, word: &str) -> Vec<Syllable> {
         word_syllables(word)

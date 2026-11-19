@@ -236,6 +236,9 @@ pub trait CreatureSim: Send {
     }
     /// discrete events from calls (e.g. clicks, snaps), by index in [`CreatureDef::events`]
     fn trigger(&mut self, _event: usize, _amount: f64) {}
+    /// zero the source's states that have decayed to nothing (control rate; the airway network
+    /// does its own: see `AirwayNetwork::flush_tiny`)
+    fn flush_tiny(&mut self) {}
 }
 
 #[derive(Serialize)]

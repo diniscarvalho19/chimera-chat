@@ -37,7 +37,7 @@ pub mod api;
 use chimera::anatomy::human::{ArticPatch, BodyMix, N_ARTIC};
 use chimera::control::score::{Gesture, Label, N_CONTROL, Targets};
 use chimera::engine::{Engine, MAX_SCHEDULE};
-use chimera::phonetics::beatbox::BeatStep;
+use chimera::phonetics::beatbox::{BeatStep, MAX_BEAT_STEPS};
 use chimera::voice::human_voice::{SourcePatch, VoiceTelemetry};
 
 pub const GESTURE_RECORD: usize = 272;
@@ -414,8 +414,8 @@ pub fn read_step(b: &[u8]) -> Option<BeatStep> {
 pub unsafe extern "C" fn engine_set_beat(h: *mut Handle, has_steps: u32, count: usize, bpm: f64, swing: f64, playing: u32) {
     let h = handle!(h);
     if has_steps != 0 {
-        let count = count.min(128);
-        let mut steps = [None; 128];
+        let count = count.min(MAX_BEAT_STEPS);
+        let mut steps = [None; MAX_BEAT_STEPS];
         for (i, s) in steps.iter_mut().enumerate().take(count) {
             *s = read_step(&h.records[i * STEP_RECORD..(i + 1) * STEP_RECORD]);
         }

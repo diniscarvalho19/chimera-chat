@@ -105,6 +105,9 @@ impl CreatureSim for Elephant {
         }
         self.a.net.step()
     }
+    fn flush_tiny(&mut self) {
+        self.a.glottis_src.flush_tiny();
+    }
     fn source_state(&self, out: &mut Vec<(&'static str, f64)>) {
         out.clear();
         out.push(("glottis", js_min(1.0, self.a.glottis_src.area / 1.6)));

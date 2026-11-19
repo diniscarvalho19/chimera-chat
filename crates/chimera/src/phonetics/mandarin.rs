@@ -10,15 +10,15 @@
 //!   turns the others second (你好 ni2 hao3).
 //! - Pinyin → IPA on the inventory. Stops and affricates say their aspiration, which is what
 //!   Mandarin contrasts: b d g z zh j are unaspirated (p˭ t˭ k˭ ts˭ tʂ˭ tɕ˭), p t k c ch q aspirated.
-//! - Tones → pitch bends ([`tone_bends`]): the melody stays as written, the tone colours the
-//!   note's start or end.
+//! - Tones are read, not sung: a song follows its melody. They decide the sandhi above and the
+//!   neutral tone's reduced vowel, and wait for speech to be drawn as pitch.
 //!
 //! [`Pinyin`] reads Mandarin typed as pinyin instead, with no lexicon: a Latin word that carries
 //! tones (marks, "nǐhǎo", or numbers, "ni3 hao3") and parses as pinyin. Toneless words stay
 //! English.
 
 use super::syllables::FrontEnd;
-use super::{Bend, Edge, Segment, Syllable};
+use super::{Segment, Syllable};
 use std::collections::HashMap;
 
 pub fn is_han(c: char) -> bool {
@@ -134,28 +134,22 @@ fn third_tones(py: &mut [String]) {
     }
 }
 
-/// How a Mandarin tone bends its sung note (semitones from the note; see [`Bend`]): 2 scoops up
-/// from below, 3 dips, 4 starts a little high and falls off the end, 1 and 5 stay on the note.
-pub fn tone_bends(tone: u8) -> Vec<Bend> {
-    let b = |at, len, max, st| Bend { at, len, max, st };
-    match tone {
-        2 => vec![b(Edge::Start, 0.45, 0.25, -3.5)],
-        3 => vec![b(Edge::Start, 0.55, 0.3, -4.0)],
-        4 => vec![b(Edge::Start, 0.25, 0.12, 1.5), b(Edge::End, 0.4, 0.2, -4.0)],
-        _ => vec![],
-    }
-}
-
-
 /// Fraction of a vowel nasalised before -n/-ng.
-const NASAL_LEAD: f64 = 0.4;
+const NASAL_LEAD: f64 = 0.6;
 
-/// Mandarin's sung timing: nasal codas held long enough to tell -n from -ng (the place cue is in
-/// the vowel's last formant movement and the murmur; at the default ~60 ms they read as one).
+/// A rhyme's ending (the off-glide of ai ei ao ou, a nasal coda) is one closing movement at the end
+/// of the syllable, this long at most (s): Mandarin's 韵尾 is where the vowel ends up, not a second
+/// sound (`Syllable::closing`).
+const CLOSING: f64 = 0.2;
+
+/// Mandarin's sung timing: a nasal coda is a short murmur at the end of a closing rhyme. The place
+/// cue is in the vowel's last formant movement (the song planner moves the tongue body toward the
+/// coda over the vowel's last 150 ms). Held 130 and 100 ms after a vowel that didn't move, as they
+/// were, a native listener heard a second sound: 昂 as an + ng.
 fn coda_dur(ipa: &str) -> Option<f64> {
     match ipa {
-        "ŋ" => Some(0.13),
-        "n" => Some(0.10),
+        "ŋ" => Some(0.08),
+        "n" => Some(0.07),
         _ => None,
     }
 }
@@ -211,27 +205,29 @@ fn final_parts(f: &str) -> Option<(&'static [&'static str], &'static str, &'stat
         "o" => (&["w"], "ɔ", N),
         "e" => (N, "ɤ", N),
         "i" => (N, "i", N),
-        "u" => (N, "u", N),
+        "u" => (N, "u̠", N),
         "v" => (N, "y", N),
         "er" => (N, "ɝ", N),
         "ai" => (N, "aɪ", N),
         "ei" => (N, "eɪ", N),
-        "ao" => (N, "aʊ", N),
-        "ou" => (N, "əʊ", N),
+        "ao" => (N, "aʊ̠", N),
+        "ou" => (N, "əʊ̠", N),
         "an" => (N, "a", &["n"]),
         "en" => (N, "ə", &["n"]),
         "ang" => (N, "ɑ", &["ŋ"]),
         "eng" => (N, "ɤ", &["ŋ"]),
-        "ong" => (N, "ʊ", &["ŋ"]),
+        "ong" => (N, "ʊ̠", &["ŋ"]),
         "ia" => (&["j"], "a", N),
+        // yo (哟 唷): an interjection's [jɔ]
+        "io" => (&["j"], "ɔ", N),
         "ie" => (&["j"], "ɛ", N),
-        "iao" => (&["j"], "aʊ", N),
-        "iu" | "iou" => (&["j"], "əʊ", N),
+        "iao" => (&["j"], "aʊ̠", N),
+        "iu" | "iou" => (&["j"], "əʊ̠", N),
         "ian" => (&["j"], "ɛ", &["n"]),
         "in" => (N, "i", &["n"]),
         "iang" => (&["j"], "ɑ", &["ŋ"]),
         "ing" => (N, "i", &["ŋ"]),
-        "iong" => (&["j"], "ʊ", &["ŋ"]),
+        "iong" => (&["j"], "ʊ̠", &["ŋ"]),
         "ua" => (&["w"], "a", N),
         "uo" => (&["w"], "ɔ", N),
         "uai" => (&["w"], "aɪ", N),
@@ -292,6 +288,11 @@ pub fn pinyin_syllable(py: &str, text: &str) -> Option<Syllable> {
     // the apical vowels: the consonant's tongue held open (ɿ after z c s, ʅ after zh ch sh r)
     let apical_vowel = if matches!(ini, "z" | "c" | "s") { "ɿ" } else { "ʅ" };
     let (glide, mut nucleus, coda) = if apical { (&[][..], apical_vowel, &[][..]) } else { final_parts(&fin)? };
+    // er is a central vowel (a, for the fourth tone: 二 is more open) moving into the r-colouring, not
+    // English's /ɝ/ held still: the start is the quick on-glide, the r-coloured vowel holds the note
+    if fin == "er" {
+        nucleus = if t == 4 { "aɝ" } else { "əɝ" };
+    }
     // a neutral-tone syllable's e reduces (的 de, 了 le)
     if t == 5 && nucleus == "ɤ" {
         nucleus = "ə";
@@ -302,17 +303,17 @@ pub fn pinyin_syllable(py: &str, text: &str) -> Option<Syllable> {
         (["j"], "a") => Some("ia"),
         (["j"], "ɛ") => Some("iɛ"),
         (["j"], "ɑ") => Some("iɑ"),
-        (["j"], "ʊ") => Some("iʊ"),
-        (["w"], "a") => Some("ua"),
-        (["w"], "ɔ") => Some("uɔ"),
-        (["w"], "ɑ") => Some("uɑ"),
-        (["w"], "ə") => Some("uə"),
+        (["j"], "ʊ̠") => Some("iʊ̠"),
+        (["w"], "a") => Some("u̠a"),
+        (["w"], "ɔ") => Some("u̠ɔ"),
+        (["w"], "ɑ") => Some("u̠ɑ"),
+        (["w"], "ə") => Some("u̠ə"),
         (["ɥ"], "ɛ") => Some("yɛ"),
         // the three-vowel finals: the glide into a falling diphthong (iao, iou, uai, uei)
-        (["j"], "aʊ") => Some("iaʊ"),
-        (["j"], "əʊ") => Some("iəʊ"),
-        (["w"], "aɪ") => Some("uaɪ"),
-        (["w"], "eɪ") => Some("ueɪ"),
+        (["j"], "aʊ̠") => Some("iaʊ̠"),
+        (["j"], "əʊ̠") => Some("iəʊ̠"),
+        (["w"], "aɪ") => Some("u̠aɪ"),
+        (["w"], "eɪ") => Some("u̠eɪ"),
         _ => None,
     };
     if let Some(r) = rising {
@@ -336,10 +337,10 @@ pub fn pinyin_syllable(py: &str, text: &str) -> Option<Syllable> {
         onset,
         nucleus: Segment::new(nucleus),
         coda: coda.iter().map(|c| Segment { dur: coda_dur(c), ..Segment::new(c) }).collect(),
-        pitch: tone_bends(t),
         // vowels before -n/-ng are nasalised. (Lighter neutral tones, breath 0.7 on 的 了, sounded
         // more natural but made them harder to recognise in the scramble test, so they stay full.)
         nasal_lead: (!coda.is_empty()).then_some(NASAL_LEAD),
+        closing: Some(CLOSING),
         ..Default::default()
     })
 }
@@ -462,12 +463,23 @@ fn valid_syllable(base: &str) -> bool {
     (real(base) || erhua) && pinyin_syllable(&format!("{base}1"), "").is_some()
 }
 
+/// Syllables often unstressed and toneless inside a word: particles and suffixes (de le me men zi
+/// tou ge ba ma ne), the negation and 一 in a verb pattern (bu yi), directional complements (lai qu
+/// shang xia guo), and words' second halves that are neutral (you huan xi shi hou fu mian bian li
+/// zhe). Written without a tone inside a toned word, they are neutral.
+const NEUTRAL_INSIDE: &[&str] = &[
+    "ba", "bian", "bu", "de", "fu", "ge", "guo", "hou", "huan", "lai", "le", "li", "ma", "me", "men", "mian", "ne", "qu",
+    "shang", "shi", "tou", "xi", "xia", "yi", "you", "zhe", "zi",
+];
+
 /// A word → (spelling, numbered pinyin) per syllable; None if it carries no tone or isn't pinyin.
 fn parse_pinyin(word: &str) -> Option<Vec<(String, String)>> {
     // pieces end at a tone number or an apostrophe; each letter keeps its spelling and its mark
     let mut pieces: Vec<(Vec<(char, char, u8)>, Option<u8>)> = vec![(Vec::new(), None)];
     let mut toned = false;
-    for c in word.chars().flat_map(char::to_lowercase) {
+    // each letter is read lowercased but keeps its spelling for the note's text (Xī'ān, not xī'ān)
+    for shown in word.chars() {
+        let c = shown.to_lowercase().next().unwrap_or(shown);
         let last = pieces.last_mut().unwrap();
         if let Some(d) = c.to_digit(10) {
             if d > 5 || last.0.is_empty() {
@@ -479,10 +491,10 @@ fn parse_pinyin(word: &str) -> Option<Vec<(String, String)>> {
         } else if c == '\'' {
             pieces.push((Vec::new(), None));
         } else if let Some((b, t)) = tone_mark(c) {
-            last.0.push((c, b, t));
+            last.0.push((shown, b, t));
             toned = true;
         } else if c == 'ü' || c.is_ascii_lowercase() {
-            last.0.push((c, if c == 'ü' { 'v' } else { c }, 0));
+            last.0.push((shown, if c == 'ü' { 'v' } else { c }, 0));
         } else {
             return None;
         }
@@ -491,6 +503,8 @@ fn parse_pinyin(word: &str) -> Option<Vec<(String, String)>> {
         return None;
     }
     let mut out = Vec::new();
+    // whether each syllable's tone was written (a mark or a number), and its letters
+    let mut written: Vec<(bool, String)> = Vec::new();
     for (letters, digit) in pieces.into_iter().filter(|p| !p.0.is_empty()) {
         let base: String = letters.iter().map(|l| l.1).collect();
         let cuts = split_syllables(&base)?;
@@ -501,7 +515,9 @@ fn parse_pinyin(word: &str) -> Option<Vec<(String, String)>> {
             if marks.len() > 1 {
                 return None;
             }
-            let tone = marks.first().copied().or(if n + 1 == cuts.len() { digit } else { None }).unwrap_or(5);
+            let number = if n + 1 == cuts.len() { digit } else { None };
+            written.push((!marks.is_empty() || number.is_some(), base[start..end].to_string()));
+            let tone = marks.first().copied().or(number).unwrap_or(5);
             let mut text: String = span.iter().map(|l| l.0).collect();
             if n + 1 == cuts.len() && digit.is_some() && marks.is_empty() {
                 text.push(char::from(b'0' + tone));
@@ -510,28 +526,58 @@ fn parse_pinyin(word: &str) -> Option<Vec<(String, String)>> {
             start = end;
         }
     }
+    // a toned word starts with a written tone, and an unwritten one later is neutral: at the end
+    // (xièxie, dōngxi), or inside as one of the syllables that are often neutral (zěnmeyàng,
+    // háizimen, duìbuqǐ). English words with accents break this: résumé (su unwritten inside),
+    // touché (tou unwritten first)
+    let last = written.len() - 1;
+    let neutral_inside = |b: &str| NEUTRAL_INSIDE.contains(&b);
+    if !written[0].0 || written.iter().enumerate().any(|(i, (w, b))| !w && i > 0 && i < last && !neutral_inside(b)) {
+        return None;
+    }
     Some(out)
 }
 
-/// The longest valid syllable first, backing off when the rest can't be split.
+/// The longest valid syllable first, backing off when the rest can't be split. Positions the rest
+/// already failed from are remembered, so a long word that can't be split fails in linear time (it
+/// was exponential: a 30-letter typo took seconds, and Sing re-reads the lyrics on every keystroke).
 fn split_syllables(base: &str) -> Option<Vec<usize>> {
-    fn go(base: &str, at: usize, out: &mut Vec<usize>) -> bool {
+    fn go(base: &str, at: usize, out: &mut Vec<usize>, failed: &mut [bool]) -> bool {
         if at == base.len() {
             return true;
         }
+        if failed[at] {
+            return false;
+        }
         for end in (at + 1..=base.len().min(at + 6)).rev() {
-            if valid_syllable(&base[at..end]) {
+            let s = &base[at..end];
+            // pinyin's spelling: a syllable starting with a, o or e after another needs an apostrophe
+            // (Xī'ān), so née isn't né + e; the syllabic nasals are whole words (嗯 n), so Pokémon
+            // isn't po ké mo + n; and an erhua r ends a word (xīnr isn't xi + nr)
+            if at > 0 && matches!(s.as_bytes()[0], b'a' | b'o' | b'e') {
+                continue;
+            }
+            let nasal = matches!(s.trim_end_matches('r'), "n" | "ng" | "m" | "hm" | "hng");
+            if nasal && !(at == 0 && end == base.len()) {
+                continue;
+            }
+            if s.len() > 1 && s != "er" && s.ends_with('r') && end != base.len() {
+                continue;
+            }
+            if valid_syllable(s) {
                 out.push(end);
-                if go(base, end, out) {
+                if go(base, end, out, failed) {
                     return true;
                 }
                 out.pop();
             }
         }
+        failed[at] = true;
         false
     }
     let mut out = Vec::new();
-    go(base, 0, &mut out).then_some(out)
+    let mut failed = vec![false; base.len()];
+    go(base, 0, &mut out, &mut failed).then_some(out)
 }
 
 impl FrontEnd for Pinyin {
@@ -542,6 +588,10 @@ impl FrontEnd for Pinyin {
         self.starts(c) || c.is_ascii_digit() || c == '\''
     }
     fn claims(&self, word: &str) -> bool {
+        // a one-letter word is English ("room a1", French "à"); write 啊 and 饿 in characters
+        if word.chars().filter(|c| c.is_alphabetic()).count() < 2 {
+            return false;
+        }
         parse_pinyin(word).is_some()
     }
     fn word(&self, word: &str) -> Vec<Syllable> {

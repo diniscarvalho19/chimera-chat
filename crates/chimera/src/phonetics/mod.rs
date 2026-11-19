@@ -1,5 +1,4 @@
-//! Phonetics: IPA, the Portuguese and English G2Ps, syllables, durations, the gestural planner,
-//! singing, beatbox.
+//! Phonetics: IPA, English G2P, syllables, durations, the gestural planner, singing, beatbox.
 //! These run off the audio thread (they allocate); their output is a [`Plan`] of gestures that a
 //! voice plays.
 
@@ -15,6 +14,7 @@ pub mod korean;
 pub mod mandarin;
 pub mod planner;
 pub mod portuguese;
+pub mod russian;
 pub mod sing;
 pub mod songs;
 pub mod syllables;
@@ -42,21 +42,26 @@ pub struct Segment {
     /// before a vowel, not after /s/)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub aspirated: Option<bool>,
-    /// how long an aspirated stop or affricate's aspiration lasts (s, voice onset time); None: 50 ms
+    /// how long an aspirated stop or affricate aspirates (voice onset time, s), as its front end
+    /// decides it (Korean's lax stops aspirate briefly, its aspirated ones long); None: 50 ms
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vot: Option<f64>,
-}
-
-/// One phrase of an utterance: its segments, how it ends, and the words said.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct Phrase {
-    pub segments: Vec<Segment>,
-    pub intonation: Intonation,
-    /// pause after the phrase (s)
-    pub pause: f64,
-    /// the words said, one per word end in `segments`
-    pub words: Vec<String>,
+    /// a vowel said with the velum lowered (IPA combining tilde); None or false: oral
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nasalized: Option<bool>,
+    /// a consonant made with a second, palatal gesture: the tongue body raised and fronted toward
+    /// the palate (IPA ʲ); None or false: plain
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub palatalized: Option<bool>,
+    /// breathy voice: a voiced stop or affricate released with the folds apart (IPA ʱ), or a
+    /// vowel said with them part-open (IPA combining diaeresis below); None or false: modal
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub breathy: Option<bool>,
+    /// a vowel that is a glide off the vowel before it: reached over this long (s) while that vowel
+    /// lets go over the glide's own length, so the two are one movement, not two held targets;
+    /// None: a vowel of its own
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glide: Option<f64>,
 }
 
 impl Segment {
@@ -111,22 +116,27 @@ pub struct Syllable {
     /// continue the previous syllable's vowel at a new pitch
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub melisma: Option<bool>,
-    /// last syllable of a word (codas sound here; phrase breaks follow punctuation)
+    /// last syllable of a word (codas sound here; phrase breaks follow punctuation); may be left
+    /// out of hand-written JSON (false)
+    #[serde(default)]
     pub word_end: bool,
-    /// a breath follows (comma, full stop, line break)
+    /// a breath follows (comma, full stop, line break); may be left out (false)
+    #[serde(default)]
     pub phrase_end: bool,
     /// pitch bends inside the sung note, as the syllable's front end writes them (a tone, a pitch
     /// accent, a scoop); none: the note's pitch as written
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub pitch: Vec<Bend>,
-    /// breath (lung drive) while the note sounds, relative to the phrase's (a light neutral-tone
-    /// syllable); None: the phrase's
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub breath: Option<f64>,
-    /// nasalise this fraction of the vowel before a nasal coda (at most 0.25 s), as Mandarin does;
-    /// None: the song's SongOptions::nasal_lead
+    /// nasalise this fraction of the vowel before a closing rhyme's nasal coda (`closing`; at most
+    /// 0.25 s), as Mandarin does; None: the velum lowers only for the nasal itself
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub nasal_lead: Option<f64>,
+    /// the rhyme's ending (a falling diphthong's off-glide, a nasal coda) is one closing movement at
+    /// the end of the note, this long at most (s), as Mandarin's 韵尾 is: the main vowel moves into
+    /// it and it is not held. None: the off-glide holds a share of the note and the coda is a
+    /// consonant of its own
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub closing: Option<f64>,
 }
 
 /// Which end of its sung vowel a pitch bend sits at.
@@ -134,12 +144,14 @@ pub struct Syllable {
 #[serde(rename_all = "lowercase")]
 pub enum Edge {
     Start,
+    /// centred on the vowel's middle (a dip or a peak inside the note: Mandarin's tone 3)
+    Middle,
     End,
 }
 
 /// A bend of the pitch inside a sung note: `st` semitones from the note, at the vowel's start or
 /// end, over `len` of the vowel but at most `max` seconds. The melody stays as written; a bend only
-/// colours the note's start or end (Mandarin's tones, Japanese pitch accent, an English scoop).
+/// colours part of the note (a scoop, a pitch accent).
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bend {
